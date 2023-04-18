@@ -12,6 +12,7 @@ library(readxl)
 library(janitor)
 library(broom)
 library(scales)
+library(visreg)
 ```
 
 ## Todo
@@ -19,9 +20,10 @@ library(scales)
 Cleanup such that datacleaning on top.
 Check with termplot that we get the same.
 Add regression tables?
+Convert into conditional component plus residual plot as per visreg  [@breheny_visualization_2017] Visreg uses median of each variable.
 
 
-## Background
+## Background/theory
 
 Se: [@dunn_generalized_2018]p102 og [@sohil_introduction_2021][@moya-larano_plotting_2008]. "Partial residual plots could be used if the only purpose is to show how Y changes within the range of observed X values", and the slope of the fitted line corresponds to the regression coefficient in the complete model [@moya-larano_plotting_2008].
 
@@ -31,6 +33,16 @@ https://www.epa.gov/sites/default/files/2016-05/documents/tech_notes_6_dec2013_t
 Statistical Methods for Trend Detection and Analysis in the Environmental Sciences
 https://cran.r-project.org/web/packages/trend/vignettes/trend.pdf
 Alternativt bruke nøyaktig samplingtid og gjøre MK-test plus avplot?
+
+## Data cleaning
+
+```{r}
+# exported .xlsx to .csv from the file received from Sylvia on mail 14/4/23 using Excel.
+raw_data <- read_csv2("data/Hele datasettet lipidvekt til Sylvia med fys param sfr.csv") %>%
+  clean_names() %>% mutate(log_hel_lengde_cm = log10(hel_lengde_cm))
+  
+```
+
 
 
 
@@ -67,17 +79,15 @@ $$
 # make tidy, value and parameter
 
 # full linear regression model
-pop_lm <- function(df) {
-    lm(data = df, formula = value ~ year + hel_lengde_cm + fettinnhold_percent, na.action = na.exclude)
+pop_lm <- function(in_dat) {
+    lm(data = in_dat, formula = value ~ year + log_hel_lengde_cm + fettinnhold_percent, na.action = na.exclude)
 }
 
-# exported .xlsx to .csv from the file received from Sylvia on mail 14/4/23 using Excel.
+
 # cleaning, removing unused variables
-pop_lever <- read_csv2("data/Hele datasettet lipidvekt til Sylvia med fys param sfr.csv") %>%
-  clean_names() %>%
-  select(year, area, species, hel_lengde_cm, fettinnhold_percent, matches("log.+ww")) %>%
-  filter(if_any(matches("log"), ~ !is.na(.x))) %>%
-  mutate(hel_lengde_cm = log10(hel_lengde_cm)) %>% 
+pop_lever <- raw_data %>% 
+  select(year, area, species, log_hel_lengde_cm, fettinnhold_percent, matches("log.+ww")) %>%
+  filter(if_any(matches("log.+ww"), ~ !is.na(.x))) %>%
   # pivoting to tidy data
   pivot_longer(cols = matches("log.+ww"), names_to = "variable", values_to = "value") %>%
   mutate(
@@ -97,7 +107,9 @@ pop_lever <- read_csv2("data/Hele datasettet lipidvekt til Sylvia med fys param 
     partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
       as_tibble() %>%
       rename_with(.cols = everything(), .fn = ~ paste0(.x, "_partial_resid")))
-  ) %>% unnest(data, partial_resids)
+  ) %>% #mutate(plot = map(model, ~ visreg(.x, gg=TRUE)))
+  unnest(data, partial_resids)
+
 
 
 
@@ -136,7 +148,7 @@ ggsave("test.png")
 # termplot( test2, partial.resid=TRUE, terms="year", las=1)
 
 ```
-## Added-variable or partial regression plot TODO
+## Added-variable or partial regression plot TODO, outdated cleaning
 
 See: https://stackoverflow.com/questions/59150905/is-there-a-ggplot2-analogue-to-the-avplots-function-in-r , https://bookdown.org/rwnahhas/RMPH/mlr-viz-adj.html
 ```{r}
@@ -205,5 +217,37 @@ pop_lever_added_var %>%
   ) +
   scale_x_continuous(breaks = pretty_breaks())+ylab("pop_lever_added_var")
 
+```
+
+
+
+## Modeling from scratch
+
+```{r}
+
+
+# candidate regression model
+test_lm <- function(df) {
+    lm(data = df, formula = value ~ year + hel_lengde_cm + fettinnhold_percent, na.action = na.exclude)
+}
+
+mod_test <- raw_data %>%
+  
+  select(species, area, year, hel_lengde_cm, fettinnhold_percent, pcb7_mg_kg_ww, ddt_ww1, hch_ww, tnc_ww, hcb_ww, pbde_ww) %>%
+  mutate(across(.cols = matches("_ww"), log10, .names = "log_{col}"), .keep = "unused") %>%
+  filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
+  pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>% drop_na(species) %>%
+  group_by(species, variable) %>% 
+  nest() %>% 
+  mutate(model = map(data, test_lm)) %>%
+  # glance gets the model summary variables
+  mutate(
+    glance = map(model, broom::glance),
+    # tidy gets summary variables of the model coefficients
+    tidy = map(model, broom::tidy),
+    # augment gets per observation variables (e.g., residuals)
+    augment = map2(model, data, ~ broom::augment(.x, .y)))
+  
+  
 ```
 
