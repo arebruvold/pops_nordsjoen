@@ -14,29 +14,19 @@ library(broom)
 library(scales)
 library(visreg)
 library(jtools)
+library(ggpp)
 ```
 
-## Todo
 
-READ COOK 1993 EXPLORING PARTIAL RESIDUAL
+## Background literature
 
-Cleanup such that datacleaning on top.
-Check with termplot that we get the same.
-Add regression tables?
-Convert into conditional component plus residual plot as per visreg  [@breheny_visualization_2017] Visreg uses median of each variable.
-IS INTERCEPT REMOVAL CORRECT?
+Se: [@dunn_generalized_2018] p102 og [@sohil_introduction_2021][@moya-larano_plotting_2008]. "Partial residual plots could be used if the only purpose is to show how Y changes within the range of observed X values", and the slope of the fitted line corresponds to the regression coefficient in the complete model [@moya-larano_plotting_2008].
 
-
-## Background/theory
-
-Se: [@dunn_generalized_2018]p102 og [@sohil_introduction_2021][@moya-larano_plotting_2008]. "Partial residual plots could be used if the only purpose is to show how Y changes within the range of observed X values", and the slope of the fitted line corresponds to the regression coefficient in the complete model [@moya-larano_plotting_2008].
-
-Alternativt og kanskje bedre: Gjøre Mann-Kendall test på residualer fra modell som korrigerer for lengde og fettinnhold. Plotte partielle residualer for GAM-modell:
+Alternativt og kanskje bedre: Gjøre Mann-Kendall test på residualer fra modell som korrigerer for lengde og fettinnhold. Plotte partielle residualer for GAM-modell. Da bruke nøyaktig samplingtid og gjøre MK-test plus avplot(?)
 https://www.sciencedirect.com/science/article/pii/S1364815220310069
 https://www.epa.gov/sites/default/files/2016-05/documents/tech_notes_6_dec2013_trend.pdf
 Statistical Methods for Trend Detection and Analysis in the Environmental Sciences
 https://cran.r-project.org/web/packages/trend/vignettes/trend.pdf
-Alternativt bruke nøyaktig samplingtid og gjøre MK-test plus avplot?
 
 ## Data cleaning
 
@@ -48,6 +38,26 @@ raw_data <- read_csv2("data/Hele datasettet lipidvekt til Sylvia med fys param s
   # remove obs with no pop data
   filter(if_any(matches("log.+ww"), ~ !is.na(.x))) %>%
     pivot_longer(cols = matches("log.+ww"), names_to = "variable", values_to = "value")
+# aligned top columns and added species column in excel.
+# raw_data <-
+  
+  raw_data <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
+    clean_names() %>%
+    select(species, year, length_cm, fettinnhold_percent, matches("w_w")) %>%
+    drop_na(species, year, length_cm, fettinnhold_percent) %>%
+    mutate(across(.cols = matches("w_w|length_cm"), .fn = ~ as.numeric(.x) %>% log10())) %>%
+    rename_with(
+      ~ str_replace_all(.x, c(
+        "w_w" = "ww",
+        "^s" = "",
+        "fettinnhold_percent" = "fat_pc"
+      )) %>%
+        str_to_lower(),
+      .cols = !matches("species")
+    ) %>%
+    # remove obs with no pop data
+    filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
+    pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value")
   
 ```
 
@@ -56,136 +66,34 @@ raw_data <- read_csv2("data/Hele datasettet lipidvekt til Sylvia med fys param s
 
 ## Partial residual plot
 
-The partial residual of $X_3$ for the i-th observation is generally defined as [@sohil_introduction_2021][@moya-larano_plotting_2008]:
+Assuming the least square estimate of the covariates $X_{1}$, $X_{2}$ and $X_{3}$ and $y_i$ and $\epsilon_i$ is the response and residual for the i-th point:
 
 $$
-r_i=y_i-\beta_0-f_1\left(x_{i 1}\right)-f_2\left(x_{i 2}\right),
+y_i = f_1(x_{i1}) + f_2(x_{i2}) + f_3(x_{i3}) + \epsilon_i.
 $$
 
-**SHOULD NOT INTERCEPT BE INCLUDED ($\beta_0$)? MAIL SENT TO statlearning!**
-
-or, (almost) equivalently,
+The partial residual of $X_3$ for the i-th observation is then generally defined as [@sohil_introduction_2021][@larsen_use_1972]:
 
 $$
-r_i = \epsilon_i + f_3(x_{i3})
-$$
-
-where $f_1$ and $f_2$ in the simplest linear case corresponds to $\hat\beta_1X_{i1}$ and $\hat\beta_2X_{i2}$, and where $\epsilon_i$ is the residual from the overall model $y_i = \beta_0 + f_1\left(x_{i 1}\right)+f_2\left(x_{i 2}\right)+f_3\left(x_{i 3}\right)$
-
-
-$$
-r_i = \epsilon_i + \hat\beta_3(year_{i})
-$$
-
-$$
-y_i = (\hat\beta_0?) + \hat\beta_{year}(year_{i})+ \hat\beta_{length}(length_{i})+\hat\beta_{fatperc}(fatperc_{i})+ \epsilon_i
+r_i = y_i-f_1\left(x_{i 1}\right)-f_2\left(x_{i 2}\right) = \epsilon_i + f_3(x_{i3}) ,
 $$
 
 
-```{r}
+It must be emphasized that where $f_{n}$ in the simplest linear case corresponds to 
 
-# make tidy, value and parameter
+$$
+f_n = b_n\cdot (x_n-\bar x_n),
+$$
+and *not* $f_n = b_n\cdot x_n$!
 
-# full linear regression model
-pop_lm <- function(in_dat) {
-    lm(data = in_dat, formula = value ~ year + log_hel_lengde_cm + fettinnhold_percent, na.action = na.exclude)
-}
+$$
+y_i = \hat b_0 + \hat b_{year}(year_{i})+ \hat b_{length}(length_{i})+\hat b_{fatperc}(fatperc_{i})+ \epsilon_i
+$$
+or, similarly (VERIFY)
 
-#function that takes in .x tidy data and .y med_log_hel_lengde_cm, med_fettinnhold_percent, gives out
-  # estimate;intercept + estimate;log_hel_lengde_cm, estimate;log_hel_lengde_cm
-  expl_scaling_fn <- function(model_tidy, meds){
-    model_tidy %>% select(term, estimate) %>% pivot_wider(names_from = "term", values_from = "estimate") %>% 
-      mutate(
-        log_hel_lengde_cm = log_hel_lengde_cm*as.numeric(meds$med_log_hel_lengde_cm) %>% as.numeric(),
-        fettinnhold_percent = fettinnhold_percent*as.numeric(meds$med_fettinnhold_percent)%>% as.numeric()
-      ) %>% janitor::clean_names() %>% 
-      mutate(explanatory_scaled = log_hel_lengde_cm+fettinnhold_percent) #+intercept?
-  }
-
-
-# cleaning, removing unused variables
-pop_lever <- raw_data %>%
-  select(year, area, species, log_hel_lengde_cm, fettinnhold_percent, matches("log.+ww")) %>%
-  # remove obs with no pop data
-  filter(if_any(matches("log.+ww"), ~ !is.na(.x))) %>%
-  # pivoting to tidy data
-  pivot_longer(cols = matches("log.+ww"), names_to = "variable", values_to = "value") %>%
-  # integer year
-  mutate(
-    year = as.integer(year)
-  ) %>%
-  # make tidy
-  group_by(species, variable) %>%
-  nest() %>%
-  mutate(
-    model = map(data, pop_lm),
-    med_log_hel_lengde_cm = map(data, ~ median(.x$log_hel_lengde_cm, na.rm = TRUE)),
-    med_fettinnhold_percent = map(data, ~ median(.x$fettinnhold_percent, na.rm = TRUE))
-  ) %>%
-  # glance gets the model summary variables
-  mutate(
-    glance = map(model, broom::glance),
-    # tidy gets summary variables of the model coefficients
-    tidy = map(model, broom::tidy),
-    # augment gets per observation variables (e.g., residuals)
-    augment = map2(model, data, ~ broom::augment(.x, .y)),
-    partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
-      as_tibble() %>%
-      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_partial_resid"))),
-    explanatory_scaling = map(
-      tidy,
-      ~ expl_scaling_fn(.x, tibble(med_log_hel_lengde_cm, med_fettinnhold_percent))
-    )
-  ) %>%
-  mutate(plot = map(model, ~ visreg(.x, "year", gg = FALSE, type = "conditional"))) %>%
-  mutate(ggplot = map(model, ~ effect_plot(.x, pred = year, interval = TRUE, partial.residuals = TRUE))) %>%
-  mutate(plot2 = map(model, ~ termplot(.x, partial.resid = TRUE, terms = "year", las = 1)))
-
- # patchwork::wrap_plots(pop_lever[1,12])
-
-  
-  
-  
-  #add intercept plus median value of each dependent variable. Use https://stats.stackexchange.com/questions/233007/interpreting-effects-plots-in-r ? Or predict(fit, newdata = data.frame(e42dep = 2, c160age = 53.46282), type = "response")
-
-
-
-
-pop_lever %>% 
-  mutate(year_pval = map(tidy, ~ .x[[2,5]]) %>% as.numeric()) %>%
-    ggplot(aes(year, year_partial_resid)) +
-  geom_jitter(size = 0.2) +
-    geom_smooth(method = "lm", se = TRUE, color = "red", size = 0.5)+
-  facet_grid(species ~ variable, scales = "free") +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1)
-  ) +
-  # geom_text(color = "red",
-  #     x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
-  #     aes(label = paste("adj. R2:", round(adj.r.squared, digits = 3)))
-  #   ) +
-    geom_text(color = "red",
-      x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
-      aes(label = paste("p-val:", round(year_pval, digits = 6)))
-    )+
-  scale_x_continuous(breaks = pretty_breaks())+ylab("P-resids")
-
-ggsave("test.png")
-
-# test2 <- lm(data = read_csv2("data/Hele datasettet lipidvekt til Sylvia med fys param sfr.csv") %>%
-#   clean_names() %>%
-#   select(year, area, species, hel_lengde_cm, fettinnhold_percent, matches("log.+ww")) %>%
-#   drop_na() %>%
-#   # pivoting to tidy data
-#   pivot_longer(cols = matches("log.+ww"), names_to = "variable", values_to = "value") %>%
-#   mutate(
-#     year = as.integer(year)
-#   ) %>% filter(variable == "log_pbde_ww", area == "Egersund Bank", species == "Saithe") , formula = value ~ year + hel_lengde_cm + fettinnhold_percent)
-# 
-# termplot( test2, partial.resid=TRUE, terms="year", las=1)
-
-```
+$$
+ y_i = \hat b_{year}\cdot (x_{year}-\bar x_{year}) + \hat b_{length}\cdot (x_{length}-\bar x_{length}) + \hat b_{fatperc}\cdot (x_{fatperc}-\bar x_{fatperc}) 
+$$
 ## Added-variable or partial regression plot TODO, outdated cleaning
 
 See: https://stackoverflow.com/questions/59150905/is-there-a-ggplot2-analogue-to-the-avplots-function-in-r , https://bookdown.org/rwnahhas/RMPH/mlr-viz-adj.html
@@ -261,157 +169,50 @@ pop_lever_added_var %>%
 
 
 
-## Making partial residual plot from scratch
+## Conditional partial residual plots
 
 ```{r}
-#contrast visreg
-pa_vr <- pop_lever[3,] %>% mutate(plot = map(model, ~ visreg(.x, "year",  gg=TRUE, type = "contrast")))
-pa_vr <- pa_vr$plot[[1]]
-#contrast manual
-p_man <- pop_lever[3,] %>%  mutate(
-    glance = map(model, broom::glance),
-    # tidy gets summary variables of the model coefficients
-    tidy = map(model, broom::tidy),
-    # augment gets per observation variables (e.g., residuals)
-    augment = map2(model, data, ~ broom::augment(.x, .y)),
-    partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
-      as_tibble() %>%
-      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_partial_resid")))
-)  %>% unnest(data, partial_resids, explanatory_scaling) %>% 
-  mutate(year_pval = map(tidy, ~ .x[[2,5]]) %>% as.numeric()) %>%
-    ggplot(aes(year, year_partial_resid)) +
-  geom_point(size = 0.2) +
-    geom_smooth(method = "lm", se = TRUE, color = "red", size = 0.5)+
-  facet_grid(species ~ variable, scales = "free") +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1)
-  ) +
-  # geom_text(color = "red",
-  #     x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
-  #     aes(label = paste("adj. R2:", round(adj.r.squared, digits = 3)))
-  #   ) +
-    geom_text(color = "red",
-      x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
-      aes(label = paste("p-val:", round(year_pval, digits = 6)))
-    )+
-  scale_x_continuous(breaks = pretty_breaks())+ylab("P-resids")
+# full linear regression model
+pop_lm <- function(in_dat) {
+  lm(
+    data = in_dat, formula = value ~ year + log_hel_lengde_cm + fettinnhold_percent,
+    na.action = na.exclude
+  )
+}
 
-vrdat <- ggplot_build(pa_vr)
-mandat <- ggplot_build(p_man)
-
-vrdat$data[[2]] %>% pull(y) %>% mean(na.rm = T)
-
-mandat$data[[1]] %>% pull(y) %>% mean(na.rm = T)
-
-pa_vr
-p_man
-  
-```
-
-
-```{r}
-
-
-#LM FIT WILL BE DIFFERENT WHEN APPLIED to SCALED DATASET DUE TO SQR ROOT BEING DIFFERENT. But does not explain why values different.
-
-# Same distribution conditionakl and contrast?
-
-#conditional jtools
-pa_jt <- pop_lever[1,] %>% mutate(plot = map(model, ~ effect_plot(.x, pred = year, interval = TRUE, partial.residuals = TRUE)
-))
-pa_jt <- pa_jt$plot[[1]]+scale_y_continuous(breaks = pretty_breaks(n=10))
-#condoitional visreg
-
-pa_vr <- pop_lever[1,] %>% mutate(plot = map(model, ~ visreg(.x, "year",  gg=TRUE, type = "conditional")))
-pa_vr <- pa_vr$plot[[1]]+scale_y_continuous(breaks = pretty_breaks(n=10))
-
-#conditional manual
-p_man <- pop_lever[1, ] %>% mutate(
-  data2 = map(data, ~ .x %>%
-    mutate(
-      log_hel_lengde_cm = median(log_hel_lengde_cm, na.rm = TRUE),
-      fettinnhold_percent = median(fettinnhold_percent, na.rm = TRUE),
-      year = year
-    )),
-  glance = map(model, broom::glance),
-  # tidy gets summary variables of the model coefficients
-  tidy = map(model, broom::tidy),
-  # augment gets per observation variables (e.g., residuals)
-  augment = map2(model, data, ~ broom::augment(.x, .y)),
-  partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
-    as_tibble() %>%
-    rename_with(.cols = everything(), .fn = ~ paste0(.x, "_partial_resid"))),
-  pred_meds = map(model, ~ predict(.x, data = data2) %>% as_tibble())
-) %>% 
-  unnest(data, partial_resids, pred_meds, augment) %>%
-   mutate(year_pval = map(tidy, ~ .x[[2,5]]) %>% as.numeric()) %>%
-
-
-    ggplot(aes(year, .resid + value1)) +
-  geom_point(size = 0.2, na.rm = T) +
-    stat_smooth(method = "lm",na.rm = TRUE, se = TRUE, color = "red", size = 0.5)+
-  facet_grid(species ~ variable, scales = "free") +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1)
-  ) +
-  # geom_text(color = "red",
-  #     x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
-  #     aes(label = paste("adj. R2:", round(adj.r.squared, digits = 3)))
-  #   ) +
-    geom_text(color = "red",
-      x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
-      aes(label = paste("p-val:", round(year_pval, digits = 6)))
-    ) +
-  scale_x_continuous(breaks = pretty_breaks())+ylab("P-resids")+
-  scale_y_continuous(breaks = pretty_breaks(n = 10))
-# mutate(pred = map(model, ~ predict(.x, newdata = data.frame(log_hel_lengde_cm = med_log_hel_lengde_cm, fettinnhold_percent = med_fettinnhold_percent), type = "response")
-# ))
-#   
-#   
-#   pop_lever[1,] %>% View()
-
-vrdat <- ggplot_build(pa_vr)
-mandat <- ggplot_build(p_man)
-
-vrdat$data[[2]] %>% filter(x ==2005, y > 2.5)
-mandat$data[[1]] %>% filter(x ==2005, y > 2.5)
-
-pa_vr
-pa_jt
-p_man 
-
-  
-```
-
-Visreg and jtools do not corroborate with the data points I am getting when calculating manually. They do appear to corroborate for the partial residuals without holding other variables constant.
-
-## Test with a reduced dataset:
-
-```{r}
-# cleaning, removing unused variables
-pop_reduced <- raw_data %>%
-  # filter(variable == "log_ddt_ww", species == "Cod") %>%
-  # group_by(year, variable, species) %>%
-  # filter(
-  #   value == min(value, na.rm = TRUE) |
-  #     value == max(value, na.rm = TRUE) |
-  #     value == median(value, na.rm = TRUE)
-  # ) %>%
+# conditional manual
+p_man <- raw_data %>%
   ungroup() %>%
   group_by(species, variable) %>%
   nest() %>%
+  # apply model and calculate medians of covariates
   mutate(
     model = map(data, pop_lm),
-    med_log_hel_lengde_cm = map(data, ~ median(.x$log_hel_lengde_cm, na.rm = TRUE)) %>% as.numeric(),
-    med_fettinnhold_percent = map(data, ~ median(.x$fettinnhold_percent, na.rm = TRUE)) %>% as.numeric(),
-    med_year = map(data, ~ median(.x$year, na.rm = TRUE)) %>% as.numeric()
+    med_log_hel_lengde_cm = map(
+      data,
+      ~ median(.x$log_hel_lengde_cm, na.rm = TRUE)
+    ) %>% as.numeric(),
+    med_fettinnhold_percent = map(
+      data,
+      ~ median(.x$fettinnhold_percent, na.rm = TRUE)
+    ) %>% as.numeric(),
+    mean_log_hel_lengde_cm = map(
+      data,
+      ~ mean(.x$log_hel_lengde_cm, na.rm = TRUE)
+    ) %>% as.numeric(),
+    mean_fettinnhold_percent = map(
+      data,
+      ~ mean(.x$fettinnhold_percent, na.rm = TRUE)
+    ) %>% as.numeric(),
+    mean_year = map(
+      data,
+      ~ mean(.x$year, na.rm = TRUE)
+    ) %>% as.numeric()
   ) %>%
-  # glance gets the model summary variables
   mutate(
     glance = map(model, broom::glance),
-    # tidy gets summary variables of the model coefficients
+    year_pval = map(model, ~ broom::tidy(.x)[[2, 5]] %>% as.numeric()),
+    # tidy gets summary variables of the model coefficients, pivot to get coeffs for unnest
     tidy = map(model, ~ broom::tidy(.x) %>%
       select(term, estimate) %>%
       pivot_wider(names_from = "term", values_from = "estimate") %>%
@@ -421,37 +222,49 @@ pop_reduced <- raw_data %>%
     augment = map2(model, data, ~ broom::augment(.x, .y)),
     partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
       as_tibble() %>%
-      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_partial_resid")))
+      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_partial_resid"))),
+    normal_resids = map(model, ~ residuals(.x) %>%
+      as_tibble() %>%
+      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_normal_resid")))
   ) %>%
-  mutate(plot = map(model, ~ visreg(.x, "year", gg = TRUE, type = "conditional"))) %>%
-  mutate(ggplot = map(model, ~ effect_plot(.x, pred = year, interval = TRUE, partial.residuals = TRUE))) %>%
-  unnest(tidy, partial_resids, data)
+  # add package-generated plots for an extra check
+  mutate(
+    visreg = map(
+      model,
+      ~ visreg(.x, "year", gg = TRUE, type = "conditional")
+    ),
+    effect_plot = map(
+      model,
+      ~ effect_plot(.x, pred = year, interval = TRUE, partial.residuals = TRUE)
+    )
+  )
 
 
-pop_reduced %>% ungroup() %>% 
-  ggplot(aes(year, (year_partial_resid + intercept_coeff + med_log_hel_lengde_cm*log_hel_lengde_cm_coeff + med_fettinnhold_percent*fettinnhold_percent_coeff + med_year*year_coeff))) +
+p_man %>%
+  unnest(tidy, partial_resids, data, normal_resids, augment) %>%
+  ungroup() %>%
+  ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_log_hel_lengde_cm * log_hel_lengde_cm_coeff + med_fettinnhold_percent * fettinnhold_percent_coeff))) +
   geom_jitter(size = 0.2, na.rm = T, height = 0, width = 0.2) +
-    stat_smooth(method = "lm",na.rm = TRUE, se = TRUE, color = "red", size = 0.5)+
-  facet_grid(species ~ variable, scales = "free") +
+  geom_point(aes(year, value), size = 0.2, color = "green", position = position_jitternudge(width = 0.2, height = 0,
+                                     seed = 123, x = 0.5,
+                                     direction = "as.is",
+                                     nudge.from = "jittered"))+
+  stat_smooth(method = "lm", na.rm = TRUE, se = TRUE, color = "red", size = 0.5) +
   theme_bw() +
   theme(
-    axis.text.x = element_text(angle = 90, hjust = 1)
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.key = element_blank(), strip.background = element_rect(colour="black", fill="white")
   ) +
-  # geom_text(color = "red",
-  #     x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
-  #     aes(label = paste("adj. R2:", round(adj.r.squared, digits = 3)))
-  #   ) +
-  scale_x_continuous(breaks  = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+  geom_text(
+    data = p_man %>% group_by(species, variable) %>%
+      distinct(year_pval, .keep_all = TRUE), color = "red",
+    x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
+    aes(label = paste("p-val:", round(year_pval %>% as.numeric(), digits = 6)))
+  ) +
+  scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+  scale_y_continuous(breaks = pretty_breaks(n = 10)) +
   ylab("Concentration [log(mg/kg)]") +
   xlab("Year") +
-  scale_y_continuous(breaks = pretty_breaks(n = 10))
-
-# pop_reduced$plot[[1]]
-# pop_reduced$ggplot[[1]]
-
-pop_reduced %>% ggplot(aes(year, value)) +
-  geom_jitter(size = 0.2, na.rm = T, height = 0) +
-  stat_smooth(method = "lm", na.rm = TRUE, se = TRUE, color = "red", size = 0.5) +
   facet_grid(species ~ factor(variable, levels = c(
     "log_pcb7_ww",
     "log_ddt_ww",
@@ -459,19 +272,62 @@ pop_reduced %>% ggplot(aes(year, value)) +
     "log_hcb_ww",
     "log_tnc_ww",
     "log_pbde_ww"
-  )), scales = "free", ) +
-  theme_bw() +
+  )))
+
+ggsave("conditional_pr_sylvia_data.png")
+
+# comditional jtools and visreg
+p_man$visreg[[18]] + scale_y_continuous(breaks = pretty_breaks(n = 10))
+p_man$effect_plot[[18]]
+# patchwork::wrap_plots(p_man$visreg)
+```
+
+## Normal
+
+```{r}
+p_man %>%
+  unnest(tidy, partial_resids, data, normal_resids, augment) %>%
+  ungroup() %>%
+  ggplot(aes(year, year_partial_resid)) +
+  geom_jitter(size = 0.2, na.rm = T, height = 0, width = 0.2) +
+  stat_smooth(method = "lm", na.rm = TRUE, se = TRUE, color = "red", size = 0.5) +
+    theme_bw() +
   theme(
-    axis.text.x = element_text(angle = 90, hjust = 1)
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.key = element_blank(), strip.background = element_rect(colour="black", fill="white")
   ) +
-  # geom_text(color = "red",
-  #     x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
-  #     aes(label = paste("adj. R2:", round(adj.r.squared, digits = 3)))
-  #   ) +
-  scale_x_continuous(breaks  = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+  geom_text(
+    data = p_man %>% group_by(species, variable) %>%
+      distinct(year_pval, .keep_all = TRUE), color = "red",
+    x = -Inf, y = -Inf, hjust = -0.05, vjust = -0.5, size = 2.5,
+    aes(label = paste("p-val:", round(year_pval %>% as.numeric(), digits = 6)))
+  ) +
+  scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+  scale_y_continuous(breaks = pretty_breaks(n = 10)) +
   ylab("Concentration [log(mg/kg)]") +
   xlab("Year") +
-  scale_y_continuous(breaks = pretty_breaks(n = 10))
+  facet_grid(species ~ factor(variable, levels = c(
+    "log_pcb7_ww",
+    "log_ddt_ww",
+    "log_hch_ww",
+    "log_hcb_ww",
+    "log_tnc_ww",
+    "log_pbde_ww"
+  )))
+ 
+
+p_man %>% unnest(tidy, partial_resids, data, normal_resids, augment) %>% group_by(variable, species) %>%
+  summarise(median_presid = mean(year_partial_resid, na.rm = TRUE))
+```
+
+## Partial residual test
+
+```{r}
+p_man %>% unnest(normal_resids, tidy, data, partial_resids) %>% 
+  mutate(
+    partial_resids_man = value_normal_resid  + year_coeff * (year - mean_year)
+  ) %>% View()
+  
 
 ```
 
