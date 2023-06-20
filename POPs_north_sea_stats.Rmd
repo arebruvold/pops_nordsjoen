@@ -61,7 +61,7 @@ cleaned_data <- raw_data %>%
     # remove obs with no POP data
     filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
     pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>% 
-  # update two values found to be incorrectly entered during data exploration
+  # update two values found to be incorrectly entered
   mutate(hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
          lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g/hel_vekt_g, lsi_pc),
          hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
@@ -224,6 +224,7 @@ p_man %>% unnest(augment) %>%
     facet_grid(species~variable, scales = "free")
 
 ```
+
 Some deviation from linearity, especially for HCB in haddock and cod.
 
 ```{r}
@@ -332,7 +333,7 @@ data_tables %>%
 
 ```
 
-We have deviation from normality and p-values should be interpreted with caution.
+Deviation from normality is observed and p-values should be interpreted with caution.
 
 ### Homoskedasticity
 
@@ -365,6 +366,7 @@ cleaned_data %>%
     )+
   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
 ```
+
 However, we appear to have a decrease in LSI for haddock with year due to fish weight/size increase.
 
 ### Outliers
