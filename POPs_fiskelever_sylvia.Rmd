@@ -28,20 +28,13 @@ library(scales)
 library(visreg)
 library(jtools)
 library(ggpp)
-library(gtsummary)
-library(skimr)
-library(leaps)
-library(FactoMineR)
-library(vcd)
-library(factoextra)
 library(modelr)
 library(gt)
-library(DataExplorer)
+library(car)
 ```
 
 
-## Data exploration and cleaning
-
+## Data cleaning
 
 ```{r}
   raw_data <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
@@ -68,52 +61,56 @@ cleaned_data <- raw_data %>%
     # remove obs with no POP data
     filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
     pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>% 
-  # remove outlier
-  filter(lsi_pc < 15)
-  
+  # update two values found to be incorrectly entered during data exploration
+  mutate(hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
+         lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g/hel_vekt_g, lsi_pc),
+         hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
+         lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g/hel_vekt_g, lsi_pc),
+         )
+
 ```
-
-
-```{r}
-cleaned_data %>% select(-variable, -value) %>% 
-  mutate(across(!matches("species"), ~ as.numeric(.x))) %>% pivot_longer(cols = -"species", names_to = "variable", values_to = "value") %>% 
-  
-  
-  ggplot(aes(value))+geom_histogram(bins = 100)+facet_grid(species~variable, scales = "free")
-```
-
-
 
 
 ## Data description
 
+```{r}
+cleaned_data %>%
+  group_by(species, variable, year) %>%
+  summarise(n_obs = n()) %>%
+  ungroup() %>%
+  select(-variable) %>%
+  distinct(species, year, .keep_all = TRUE) %>% pivot_wider(names_from = "species", values_from = "n_obs") %>% 
+  gt(
+    groupname_col = "species",
+    rowname_col = "year"
+  )
+```
+
+
 * Observations:
-  + Approx. 250 for each fish species (3) for each contaminant (6). Obs ikke like godt for alle.
+  + Approx. 250 for each fish species (3) for each contaminant (6).
+  + For each year at least 41 observations for each species and contaminant except for cod in 2019, with only 9 observations.
 * Response variables:
-  + Concentrations of six different POPs in liver.
-  + Both wet weight conc and lipid weight conc available.
+  + Concentrations of six different POPs in liver in ug/kg liver wet weight.
 * Explanatory variables:
-  + Species (factor with three levels)
+  + Species 
   + year (must be kept in model)
   + weight of fish (omitted)
   + weight of liver (omitted)
-  + length of fish (log trans)
-  + fat (percentage of liver)
-  + lsi (liver weight vs total weight, nutritional condition)
-  + age (missing variables, omitted)
+  + length of fish (log transformed for normality)
+  + fat percentage (percentage of liver)
+  + lsi (liver somatic index: liver weight vs total weight, nutritional condition)
+  + fish age (missing variables: omitted)
 
-From previous studies we know the effect of these variables will differ between species due to e.g.  different physiology and feeding habits. Hence, including fish as a factor in a single model will require an advanced model and is not justified unless a comparisons between the levels of the different fish species are important. Known confounders are fish age or proxies such as fish length, liver weight, hepatosomatic index and liver somatic index. LIVER FAT CONTENT?
+From previous studies we know the effect of these variables will differ between species due to e.g. different physiology and feeding habits. Hence, including fish as a factor in a single model will require an advanced model and was not justified since comparisons between the levels of the different fish species were not important. Known confounders are fish age or proxies such as fish length and fish weight as well as liver weight, liver at content, hepatosomatic index and liver somatic index.
 
 
 ## Model selection
 
 * Main hypotheses:
   + **Is there a time trend for any of the contaminants in any of the species?**
-* Descriptive analyses:
-  + Which fish have the highest concentrations of each contaminant?
-  + Is the effect of e.g. fat content different between species?
 
-One identical model, fitted to each different dataset (3 species x  6 contaminants = 18). This is justified as included an additional explanatory variable should be inconsequential due to the large number of observations. Due to collinearity with lsi and fish length, weight of liver and fish was omitted. Fish age was omitted due to missingness of a substantial fraction of observations and collinearity with fish length. As such, a linear model including explanatory variables year, fish length, fat percentage and lsi was chosen.
+One identical model was chosen, fitted to each different dataset (3 species x  6 contaminants = 18). This is justified as including an additional explanatory variable should be inconsequential due to the large number of observations. Due to collinearity with lsi and fish length, weight of liver and fish was omitted. Fish age was omitted due to missingness of a substantial fraction of observations and collinearity with fish length. As such, a linear model including explanatory variables year, fish length, fat percentage and lsi was chosen.
 
 
 ## Model fitting
@@ -132,7 +129,7 @@ pop_lm <- function(in_dat) {
 
 ```{r model-fit-partial}
 
-# conditional manual
+# conditional partial residuals manually calculated
 p_man <- cleaned_data %>%
   ungroup() %>%
   group_by(species, variable) %>%
@@ -177,14 +174,15 @@ p_man <- cleaned_data %>%
   mutate(
     glance = map(model, broom::glance),
     year_pval = map(model, ~ broom::tidy(.x)[[2, 5]] %>% as.numeric()),
-    # tidy gets summary variables of the model coefficients, pivot to get coeffs for unnest
+    # extracting model coefficients for partial residual calculation
     tidy_coeff = map(model, ~ broom::tidy(.x) %>%
       select(term, estimate) %>%
       pivot_wider(names_from = "term", values_from = "estimate") %>%
       clean_names() %>%
       rename_with(.cols = everything(), .fn = ~ paste0(.x, "_coeff"))),
+    # tidy gets summary variables of the model coefficients
       tidy = map(model, ~ broom::tidy(.x)),
-    # augment gets per observation variables (e.g., residuals)
+    # augment gets per observation variables (e.g. residuals)
     augment = map2(model, data, ~ broom::augment(.x, .y)),
     partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
       as_tibble() %>%
@@ -204,7 +202,9 @@ p_man <- cleaned_data %>%
       ~ effect_plot(.x, pred = year, interval = TRUE, partial.residuals = TRUE)
     ),
     variable = toupper(variable) %>% str_replace_all("_WW", "")
-  )
+  ) %>% 
+  # vifs to check for collinearity
+  mutate(vifs = map(model, ~ car::vif(.x) %>% as_tibble() ))
 
 ```
 
@@ -224,12 +224,11 @@ p_man %>% unnest(augment) %>%
     facet_grid(species~variable, scales = "free")
 
 ```
-
+Some deviation from linearity, especially for HCB in haddock and cod.
 
 ```{r}
 
 #Residuals vs each covriate
-
 
 p_man %>% unnest(augment) %>%
   ggplot(aes(length_cm, .resid)) +
@@ -256,14 +255,10 @@ p_man %>% unnest(augment) %>%
 ```
 
 
-Outliers in lsi found. Removed lsi > 20.
 
 ### Normality
 
-#### Visual
-
-
-##### QQ-plot of response
+#### QQ-plot of response
 
 ```{r}
 ggplot(p_man %>% unnest(augment), aes(sample = value)) +
@@ -272,7 +267,7 @@ ggplot(p_man %>% unnest(augment), aes(sample = value)) +
   facet_grid(species ~ variable, scales = "free")
 ```
 
-##### Distribution of response
+#### Distribution of response
 
 ```{r}
 ggplot(p_man %>% unnest(augment), aes(value)) +
@@ -282,9 +277,8 @@ ggplot(p_man %>% unnest(augment), aes(value)) +
   facet_grid(species ~ variable, scales = "free")
 ```
 
-Bimodal, HCH indicating missing categorical.
 
-##### Shapiro-Wilk's test
+#### Shapiro-Wilk's test
 
 
 ```{r shapiro-3col}
@@ -295,7 +289,7 @@ fish_table <- function(x){
     tab_style(
     location = cells_body(
       columns = p.value,
-      rows = p.value < 0.01
+      rows = p.value < 0.05
     ),
     style = list(cell_text(color = "red"))
   ) %>% fmt_number(columns = 2, decimals = 3) %>% 
@@ -334,9 +328,11 @@ data_tables %>%
   cols_label(left_table = "Cod",
              mid_table = "Haddock",
              right_table = "Saithe") %>% 
-  tab_footnote("Red text indicates p-value < 0.01.")
+  tab_footnote("Red text indicates p-value < 0.05.")
 
 ```
+
+We have deviation from normality and p-values should be interpreted with caution.
 
 ### Homoskedasticity
 
@@ -352,39 +348,51 @@ p_man %>%
   facet_grid(species ~ variable, scales = "free")
 ```
 
-#### Breusch-Pagan test
+
+### Multicollinearity
+
+VIFs were determined to be below 3 for each dependent variable.
 
 ```{r}
-library(car)
- p_man %>%  mutate(
-    b_pagan = map(
-      model,
-      ~ ncvTest(.x)$p
-    )
-) %>% select(species, variable, b_pagan) %>% ungroup() %>% gt()
+cleaned_data %>%
+  select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
+  mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+  pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(as_factor(year), value)) +
+  geom_point() + geom_boxplot()+
+  theme(
+      axis.text.x = element_text(angle = 90, hjust = 1)
+    )+
+  ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
 ```
+However, we appear to have a decrease in LSI for haddock with year due to fish weight/size increase.
 
+### Outliers
 
-### Independence
-Location may be confounder, also time of year sampling took place. Different methodologies.
+```{r}
+cleaned_data %>%
+  select(-variable, -value) %>%
+  mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+  pivot_longer(cols = -"species", names_to = "variable", values_to = "value") %>%
+  ggplot(aes(value)) +
+  geom_histogram(bins = 50) +
+  facet_grid(species ~ variable, scales = "free")+ theme(
+      axis.text.x = element_text(angle = 90, hjust = 1)
+    )
 
-https://sscc.wisc.edu/sscc/pubs/RegDiag-R/index.html
-https://vincentarelbundock.github.io/modelsummary/articles/modelsummary.html
-https://thomaselove.github.io/431-notes/30-regr_diagnostics.html
-
-Can run model w/o 2008 year.
+cleaned_data %>%
+  select(-variable, -value) %>%
+  mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+  pivot_longer(cols = -"species", names_to = "variable", values_to = "value") %>%
+  ggplot(aes(value)) + geom_boxplot() + facet_grid(species ~ variable, scales = "free")+ theme(
+      axis.text.x = element_text(angle = 90, hjust = 1)
+    )
+```
+Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning above.
 
 ## Partial residuals
 
 ### Background
-
-Se: [@dunn_generalized_2018] p102 og [@sohil_introduction_2021][@moya-larano_plotting_2008]. "Partial residual plots could be used if the only purpose is to show how Y changes within the range of observed X values", and the slope of the fitted line corresponds to the regression coefficient in the complete model [@moya-larano_plotting_2008].
-
-Alternativt og kanskje bedre: Gjøre Mann-Kendall test på residualer fra modell som korrigerer for lengde og fettinnhold. Plotte partielle residualer for GAM-modell. Da bruke nøyaktig samplingtid og gjøre MK-test plus avplot(?)
-https://www.sciencedirect.com/science/article/pii/S1364815220310069
-https://www.epa.gov/sites/default/files/2016-05/documents/tech_notes_6_dec2013_trend.pdf
-Statistical Methods for Trend Detection and Analysis in the Environmental Sciences
-https://cran.r-project.org/web/packages/trend/vignettes/trend.pdf
 
 Assuming the least square estimate of the covariates $X_{1}$, $X_{2}$ and $X_{3}$ and $y_i$ and $\epsilon_i$ is the response and residual for the i-th point:
 
@@ -392,30 +400,27 @@ $$
 y_i = f_1(x_{i1}) + f_2(x_{i2}) + f_3(x_{i3}) + \epsilon_i.
 $$
 
-The partial residual of $X_3$ for the i-th observation is then generally defined as [@sohil_introduction_2021][@larsen_use_1972]:
+The partial residual of $X_3$ for the i-th observation is then generally defined as (Sohil et al., 2021) (Larsen and McCleary, 1972):
 
 $$
 r_i = y_i-f_1\left(x_{i 1}\right)-f_2\left(x_{i 2}\right) = \epsilon_i + f_3(x_{i3}) ,
 $$
-
+ 
+ where in the present case
 
 
 $$
-y_i = \hat b_0 + \hat b_{year}(year_{i})+ \hat b_{length}(length_{i})+\hat b_{fat pc}(fatperc_{i})+ \epsilon_i
+y_i = \hat b_0 + \hat b_{year}(year_{i})+ \hat b_{length}(length_{i})+\hat b_{fat pc}(fatpc_{i})+ \hat b_{lsi pc}(lsi pc_{i})+ \epsilon_i
 $$
 or, similarly
 
 $$
- y_i = \bar y + \hat b_{year}\cdot (x_{year}-\bar x_{year}) + \hat b_{length}\cdot (x_{length}-\bar x_{length}) + \hat b_{fatpc}\cdot (x_{fatpc}-\bar x_{fatpc})  + \epsilon_i
+ y_i = \bar y + \hat b_{year}\cdot (x_{year}-\bar x_{year}) + \hat b_{length}\cdot (x_{length}-\bar x_{length}) + \hat b_{fatpc}\cdot (x_{fatpc}-\bar x_{fatpc})  + \hat b_{lsipc}\cdot (x_{lsipc}-\bar x_{lsipc}) + \epsilon_i
 $$
-
 
 ### Conditional partial residual plots
 
 ```{r}
-
-
-
 p_man %>%
   unnest(tidy_coeff, partial_resids, data, normal_resids, augment) %>%
   ungroup() %>%
@@ -431,9 +436,8 @@ p_man %>%
   #                                    seed = 123, x = -0.5,
   #                                    direction = "as.is",
   #                                    nudge.from = "jittered"))+
-  ### TEST COND PART RESID EN
+  ### TEST COND PART RESID END
   stat_smooth(method = "lm", na.rm = TRUE, se = TRUE, color = "red", size = 0.5) +
-  # stat_smooth(method = "loess", na.rm = TRUE, se = TRUE, color = "orange", size = 0.4) +
   theme_bw() +
   theme(
     axis.text.x = element_text(angle = 90, hjust = 1),
@@ -503,38 +507,21 @@ p_man %>% clean_names() %>%
     ),
     style = list(cell_text(color = "green"))
   ) %>% 
-  
-  
   fmt_number(everything(), decimals = 3) %>% 
   fmt_percent(estimate, decimals = 1) %>% 
-  tab_footnote("Estimated annual percentage change obtained by exponentiation and corresponding p-values. Green indicates a significant decrease, whereas red indicates a significant increase.")
-
-
-
-
+  tab_footnote("Estimated annual percentage change obtained by exponentiation and corresponding p-values. Green color represents a significant decrease at the p = 0.05 level, while red color indicates a significant increase.")
 
 ```
 
 
 
-## Method description UPDATE
-Statistical analyses were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted  the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend.
+## Method description
+
+Statistical analyses were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted to the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the supplementary material (XXX), model validation revealed some deviation from model assumptions. As such, marginal effects were interpreted with caution.
 
 
+## References
 
-## TODO
+* Sohil, F., Sohali, M.U., Shabbir, J., 2021. An introduction to statistical learning with applications in R: by Gareth James, Daniela Witten, Trevor Hastie, and Robert Tibshirani, New York, Springer Science and Business Media, 2013, $41.98, eISBN: 978-1-4614-7137-7. Statistical Theory and Related Fields 1–1. https://doi.org/10.1080/24754269.2021.1980261
 
-* Sjekke ut conditional partial residual plots etter modell er oppdatert.
-
-* Oppdatere metodedescription.
-
-* Breusch pagan fjerne. Evt. Levene i stedet?
-
-* Fjerne shapiro wilk?
-
-* Lage til supplementary
-
-* DIskusjon at det er noen svakheter med statisik modell. I metodedel?
-
-
-
+* Larsen, W.A., McCleary, S.J., 1972. The Use of Partial Residual Plots in Regression Analysis. Technometrics 14, 781–790. https://doi.org/10/gp2cxn
