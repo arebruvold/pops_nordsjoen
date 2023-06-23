@@ -33,18 +33,17 @@ library(gt)
 library(car)
 ```
 
-
 ## Data cleaning
 
 ```{r}
   raw_data <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
-    clean_names() %>% 
-      select(species, year, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w")) %>%
-    drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>% 
-  mutate(across(.cols = -species, .fn = ~ as.numeric(.x)))
+    clean_names() %>%
+    select(species, year, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w")) %>%
+    drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>%
+    mutate(across(.cols = -species, .fn = ~ as.numeric(.x)))
 
-cleaned_data <- raw_data %>% 
-  # log transform response variables and covariate length
+  cleaned_data <- raw_data %>%
+    # log transform response variables and covariate length
     mutate(across(.cols = matches("w_w"), .fn = ~ log10(as.numeric(.x) + 1))) %>%
     mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
     mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g"), .fn = ~ as.numeric(.x))) %>%
@@ -60,13 +59,14 @@ cleaned_data <- raw_data %>%
     ) %>%
     # remove obs with no POP data
     filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
-    pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>% 
-  # update two values found to be incorrectly entered
-  mutate(hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
-         lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g/hel_vekt_g, lsi_pc),
-         hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
-         lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g/hel_vekt_g, lsi_pc),
-         )
+    pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>%
+    # update two values found to be incorrectly entered
+    mutate(
+      hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
+      lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g / hel_vekt_g, lsi_pc),
+      hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
+      lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
+    )
 
 ```
 
@@ -91,18 +91,18 @@ cleaned_data %>%
   + Approx. 250 for each fish species (3) for each contaminant (6).
   + For each year at least 41 observations for each species and contaminant except for cod in 2019, with only 9 observations.
 * Response variables:
-  + Concentrations of six different POPs in liver in ug/kg liver wet weight.
+  + Concentrations of six different POPs in liver in ug per kg liver wet weight.
 * Explanatory variables:
-  + Species 
+  + Species (cod, haddock or saithe)
   + year (must be kept in model)
-  + weight of fish (omitted)
-  + weight of liver (omitted)
-  + length of fish (log transformed for normality)
-  + fat percentage (percentage of liver)
+  + weight of fish (in g, omitted)
+  + weight of liver (in g, omitted)
+  + length of fish (in cm, log transformed for normality)
+  + fat percentage (percentage of liver weight)
   + lsi (liver somatic index: liver weight vs total weight, nutritional condition)
-  + fish age (missing variables: omitted)
+  + fish age (years, omitted)
 
-From previous studies we know the effect of these variables will differ between species due to e.g. different physiology and feeding habits. Hence, including fish as a factor in a single model will require an advanced model and was not justified since comparisons between the levels of the different fish species were not important. Known confounders are fish age or proxies such as fish length and fish weight as well as liver weight, liver at content, hepatosomatic index and liver somatic index.
+From previous studies we know the effect of these variables will differ between species due to e.g. different physiology and feeding habits. Hence, including fish as a factor in a single model will require an advanced model and was not justified since comparisons between the levels of the different fish species were not important. Known confounders are fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content, hepatosomatic index and liver somatic index.
 
 
 ## Model selection
@@ -146,7 +146,7 @@ p_man <- cleaned_data %>%
       data,
       ~ median(.x$fat_pc, na.rm = TRUE)
     ) %>% as.numeric(),
-        med_lsi_pc = map(
+    med_lsi_pc = map(
       data,
       ~ median(.x$lsi_pc, na.rm = TRUE)
     ) %>% as.numeric(),
@@ -174,6 +174,8 @@ p_man <- cleaned_data %>%
   mutate(
     glance = map(model, broom::glance),
     year_pval = map(model, ~ broom::tidy(.x)[[2, 5]] %>% as.numeric()),
+    year_estimate = map(model, ~ broom::tidy(.x)[[2, 2]] %>% as.numeric() %>% {10^. - 1}),
+    year_estimate_nolog = map(model, ~ broom::tidy(.x)[[2, 2]] %>% as.numeric()),
     # extracting model coefficients for partial residual calculation
     tidy_coeff = map(model, ~ broom::tidy(.x) %>%
       select(term, estimate) %>%
@@ -181,7 +183,7 @@ p_man <- cleaned_data %>%
       clean_names() %>%
       rename_with(.cols = everything(), .fn = ~ paste0(.x, "_coeff"))),
     # tidy gets summary variables of the model coefficients
-      tidy = map(model, ~ broom::tidy(.x)),
+    tidy = map(model, ~ broom::tidy(.x)),
     # augment gets per observation variables (e.g. residuals)
     augment = map2(model, data, ~ broom::augment(.x, .y)),
     partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
@@ -201,10 +203,13 @@ p_man <- cleaned_data %>%
       model,
       ~ effect_plot(.x, pred = year, interval = TRUE, partial.residuals = TRUE)
     ),
-    variable = toupper(variable) %>% str_replace_all("_WW", "")
-  ) %>% 
+    variable = toupper(variable) %>% str_replace_all("_WW", ""),
+    
+  ) %>%
   # vifs to check for collinearity
-  mutate(vifs = map(model, ~ car::vif(.x) %>% as_tibble() ))
+  mutate(
+    vifs = map(model, ~ car::vif(.x) %>% as_tibble())
+    )
 
 ```
 
@@ -214,7 +219,7 @@ p_man <- cleaned_data %>%
 
 ```{r}
 
-#Residuals vs fitted and vs each covriate
+#Residuals vs fitted
 
 p_man %>% unnest(augment) %>%
   ggplot(aes(.fitted, .resid)) +
@@ -229,7 +234,7 @@ Some deviation from linearity, especially for HCB in haddock and cod.
 
 ```{r}
 
-#Residuals vs each covriate
+#Residuals vs each covariate
 
 p_man %>% unnest(augment) %>%
   ggplot(aes(length_cm, .resid)) +
@@ -367,7 +372,8 @@ cleaned_data %>%
   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
 ```
 
-However, we appear to have a decrease in LSI for haddock with year due to fish weight/size increase.
+
+However, it appears to be a decrease in LSI for haddock with year due to fish weight/size increase.
 
 ### Outliers
 
@@ -390,6 +396,7 @@ cleaned_data %>%
       axis.text.x = element_text(angle = 90, hjust = 1)
     )
 ```
+
 Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning above.
 
 ## Partial residuals
@@ -427,7 +434,7 @@ p_man %>%
   unnest(tidy_coeff, partial_resids, data, normal_resids, augment) %>%
   ungroup() %>%
   ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
-  geom_jitter(size = 0.2, na.rm = T, height = 0, width = 0.2) +
+  geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
   # geom_point(aes(year, value), size = 0.2, color = "darkgrey", position = position_jitternudge(width = 0.2, height = 0,
   #                                    seed = 123, x = 0.5,
   #                                    direction = "as.is",
@@ -439,7 +446,7 @@ p_man %>%
   #                                    direction = "as.is",
   #                                    nudge.from = "jittered"))+
   ### TEST COND PART RESID END
-  stat_smooth(method = "lm", na.rm = TRUE, se = TRUE, color = "red", size = 0.5) +
+  stat_smooth(method = "lm", na.rm = TRUE, se = FALSE, color = "red", size = 0.5) +
   theme_bw() +
   theme(
     axis.text.x = element_text(angle = 90, hjust = 1),
@@ -448,12 +455,41 @@ p_man %>%
     strip.text.x = element_text(face = "bold"),
     strip.text.y = element_text(face = "bold")
   ) +
+  # conditional coloring percentage change
   geom_text(
+   data = p_man %>% group_by(species, variable) %>%
+     distinct(year_estimate, .keep_all = TRUE),
+   color =
+     case_when(
+       p_man %>% group_by(species, variable) %>%
+         distinct(year_estimate) %>% pull(year_estimate) > 0 &
+         p_man %>%
+           group_by(species, variable) %>%
+           distinct(year_pval) %>%
+           pull(year_pval) < 0.05 ~ "red",
+       p_man %>% group_by(species, variable) %>%
+         distinct(year_estimate) %>% pull(year_estimate) < 0 &
+         p_man %>%
+           group_by(species, variable) %>%
+           distinct(year_pval) %>%
+           pull(year_pval) < 0.05 ~ "green",
+       TRUE ~ "black"
+     ),
+   fontface = "bold",
+   x = -Inf, y = Inf, hjust = -0.075, vjust = 1.5,
+   size = p_man %>% group_by(species, variable) %>%
+         distinct(year_estimate) %>% pull(year_estimate) %>% as.numeric() %>% abs()*150/14 + 2.3,
+   # size = 3.7,
+   aes(label = paste0(round(year_estimate %>% as.numeric() * 100, digits = 1) %>% number(style_positive = "plus", accuracy = 0.1), "%"))
+ )+
+  # p-values
+    geom_text(
     data = p_man %>% group_by(species, variable) %>%
-      distinct(year_pval, .keep_all = TRUE), color = "black",
-    x = -Inf, y = Inf, hjust = -0.075, vjust = 1.5, size = 3,
-    aes(label = paste0("p = ", round(year_pval %>% as.numeric(), digits = 3) %>% format(nsmall = 3)))
+      distinct(year_pval, .keep_all = TRUE), color = "grey30",
+    x = 2004.9, y = 0.1, hjust = 0, vjust = 0.6, size = 2.5,
+    aes(label = paste0("p = ", round(year_pval %>% as.numeric(), digits = 3) %>% format(nsmall = 2)))
   ) +
+  
   #   geom_text(
   #   data = p_man %>% unnest(tidy) %>% group_by(species, variable) %>%
   #     distinct(year_coeff, .keep_all = TRUE), color = "red",
@@ -461,7 +497,7 @@ p_man %>%
   #   aes(label = paste0("slope = ", round(year_coeff %>% as.numeric(), digits = 4)))
   # ) +
   scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
-  scale_y_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4)) +
+  scale_y_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3), limits = c(0, 3.2)) +
   ylab("log(Concentration + 1) [\u00b5g/kg]") +
   xlab("Year | (Length, Fat and LSI)") +
 
@@ -474,7 +510,7 @@ p_man %>%
     "PBDE"
   )))
 
-ggsave("conditional_pr_stepan_data.png", width = 13, height = 7)
+ggsave("conditional_pr_stepan_data.svg", width = 8, height = 6)
 
 # comditional jtools and visreg
 # p_man$visreg[[18]] + scale_y_continuous(breaks = pretty_breaks(n = 10))
@@ -483,6 +519,8 @@ ggsave("conditional_pr_stepan_data.png", width = 13, height = 7)
 ```
 
 ## Strength of decrease
+
+### Table
 
 ```{r}
 
@@ -515,11 +553,198 @@ p_man %>% clean_names() %>%
 
 ```
 
+### Visualization without log-transformation
+
+```{r OLD-quick}
+# library(ggh4x)
+# 
+# pmtest <- p_man %>%
+#   unnest(data) %>%
+#   select(value, lsi_pc, fat_pc, year, length_cm) %>%
+#   ungroup() %>%
+#   mutate(
+#     value = 10^value - 1
+#   )
+# 
+# pmtest %>%
+#   ggplot(aes(year, value)) +
+#   geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
+#   theme_bw() +
+#   theme(
+#     axis.text.x = element_text(angle = 90, hjust = 1),
+#     legend.key = element_blank(),
+#     strip.background = element_rect(colour = "black", fill = "white"),
+#     strip.text.x = element_text(face = "bold"),
+#     strip.text.y = element_text(face = "bold")
+#   ) +
+#   scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+#   ylab("Concentration [\u00b5g/kg]") +
+#   xlab("Year") +
+#   facet_grid2(species ~ factor(variable, levels = c(
+#     "PCB7",
+#     "DDT",
+#     "HCH",
+#     "HCB",
+#     "TNC",
+#     "PBDE"
+#   )),
+#   scales = "free_y", independent = "y"
+#   )
+
+```
+
+
+```{r}
+cleaned_data <- raw_data %>%
+    # log transform response variables and covariate length
+    mutate(across(.cols = matches("w_w"), .fn = ~ as.numeric(.x))) %>%
+    mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
+    mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g"), .fn = ~ as.numeric(.x))) %>%
+    rename_with(
+      ~ str_replace_all(.x, c(
+        "w_w" = "ww",
+        "^s" = "",
+        "fettinnhold_percent" = "fat_pc",
+        "lsi_percent" = "lsi_pc"
+      )) %>%
+        str_to_lower(),
+      .cols = !matches("species")
+    ) %>%
+    # remove obs with no POP data
+    filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
+    pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>%
+    # update two values found to be incorrectly entered
+    mutate(
+      hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
+      lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g / hel_vekt_g, lsi_pc),
+      hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
+      lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
+    )
+
+p_man <- cleaned_data %>%
+  ungroup() %>%
+  group_by(species, variable) %>%
+  drop_na(value) %>%
+  nest() %>%
+  # apply model and calculate medians of covariates
+  mutate(
+    model = map(data, pop_lm),
+    med_length_cm = map(
+      data,
+      ~ median(.x$length_cm, na.rm = TRUE)
+    ) %>% as.numeric(),
+    med_fat_pc = map(
+      data,
+      ~ median(.x$fat_pc, na.rm = TRUE)
+    ) %>% as.numeric(),
+    med_lsi_pc = map(
+      data,
+      ~ median(.x$lsi_pc, na.rm = TRUE)
+    ) %>% as.numeric(),
+    mean_length_cm = map(
+      data,
+      ~ mean(.x$length_cm, na.rm = TRUE)
+    ) %>% as.numeric(),
+    mean_fat_pc = map(
+      data,
+      ~ mean(.x$fat_pc, na.rm = TRUE)
+    ) %>% as.numeric(),
+    mean_lsi_pc = map(
+      data,
+      ~ mean(.x$lsi_pc, na.rm = TRUE)
+    ) %>% as.numeric(),
+    mean_year = map(
+      data,
+      ~ mean(.x$year, na.rm = TRUE)
+    ) %>% as.numeric(),
+    mean_value = map(
+      data,
+      ~ mean(.x$value, na.rm = TRUE)
+    ) %>% as.numeric()
+  ) %>%
+  mutate(
+    glance = map(model, broom::glance),
+    year_pval = map(model, ~ broom::tidy(.x)[[2, 5]] %>% as.numeric()),
+    year_estimate = map(model, ~ broom::tidy(.x)[[2, 2]] %>% as.numeric() %>% {10^. - 1}),
+    year_estimate_nolog = map(model, ~ broom::tidy(.x)[[2, 2]] %>% as.numeric()),
+    # extracting model coefficients for partial residual calculation
+    tidy_coeff = map(model, ~ broom::tidy(.x) %>%
+      select(term, estimate) %>%
+      pivot_wider(names_from = "term", values_from = "estimate") %>%
+      clean_names() %>%
+      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_coeff"))),
+    # tidy gets summary variables of the model coefficients
+    tidy = map(model, ~ broom::tidy(.x)),
+    # augment gets per observation variables (e.g. residuals)
+    augment = map2(model, data, ~ broom::augment(.x, .y)),
+    partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
+      as_tibble() %>%
+      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_partial_resid"))),
+    normal_resids = map(model, ~ residuals(.x) %>%
+      as_tibble() %>%
+      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_normal_resid")))
+  ) %>%
+  # add package-generated plots for an extra check
+  mutate(
+    visreg = map(
+      model,
+      ~ visreg(.x, "year", gg = TRUE, type = "conditional")
+    ),
+    effect_plot = map(
+      model,
+      ~ effect_plot(.x, pred = year, interval = TRUE, partial.residuals = TRUE)
+    ),
+    variable = toupper(variable) %>% str_replace_all("_WW", ""),
+    
+  ) %>%
+  # vifs to check for collinearity
+  mutate(
+    vifs = map(model, ~ car::vif(.x) %>% as_tibble())
+    )
+
+p_man %>%
+  unnest(tidy_coeff, partial_resids, data, normal_resids, augment) %>%
+  ungroup() %>%
+  ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
+  geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
+  # geom_point(aes(year, value), size = 0.2, color = "darkgrey", position = position_jitternudge(width = 0.2, height = 0,
+  #                                    seed = 123, x = 0.5,
+  #                                    direction = "as.is",
+  #                                    nudge.from = "jittered"))+
+  ### TEST COND PART RESID
+  # geom_point(aes(year, value_normal_resid + mean_value +
+  #                year_coeff*(year - mean_year) + length_cm_coeff*(med_length_cm - mean_length_cm) + fat_pc_coeff*(med_fat_pc - mean_fat_pc)), size = 0.2, color = "orange", position = position_jitternudge(width = 0.2, height = 0,
+  #                                    seed = 123, x = -0.5,
+  #                                    direction = "as.is",
+  #                                    nudge.from = "jittered"))+
+  ### TEST COND PART RESID END
+  # geom_smooth()+
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.key = element_blank(),
+    strip.background = element_rect(colour="black", fill="white"),
+    strip.text.x = element_text(face = "bold"),
+    strip.text.y = element_text(face = "bold")
+  ) +
+  scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+  ylab("Concentration [\u00b5g/kg]") +
+  xlab("Year | (Length, Fat and LSI)") +
+
+    facet_grid2(species ~ factor(variable, levels = c(
+    "PCB7",
+    "DDT",
+    "HCH",
+    "HCB",
+    "TNC",
+    "PBDE"
+  )), scales = "free_y", independent = "y")
+```
 
 
 ## Method description
 
-Statistical analyses were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted to the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the supplementary material (XXX), model validation revealed some deviation from model assumptions. As such, marginal effects were interpreted with caution.
+Additional statistical analyses for the determination of temporal trends were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted to the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the supplementary material, model validation revealed some violations of the model assumptions. As such, marginal effects were interpreted with caution.
 
 
 ## References
