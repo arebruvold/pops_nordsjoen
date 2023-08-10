@@ -1,5 +1,5 @@
 ---
-title: "Levels and temporal trends of persistent organic pollutants (POPs) in liver of atlantic cod, haddock and saithe from the northeastern North Sea "
+title: "Six groups of persistent organic pollutants show varying temporal trends in three North Sea gadoid fish species: Data treatment and statistical analysis"
 output:
   bookdown::html_document2:
     theme: journal
@@ -31,6 +31,7 @@ library(ggpp)
 library(modelr)
 library(gt)
 library(car)
+library(ggh4x)
 ```
 
 ## Data cleaning
@@ -81,6 +82,7 @@ cleaned_data %>%
   select(-variable) %>%
   distinct(species, year, .keep_all = TRUE) %>% pivot_wider(names_from = "species", values_from = "n_obs") %>% 
   gt(
+    caption = "Samples per year per species.",
     groupname_col = "species",
     rowname_col = "year"
   )
@@ -93,17 +95,16 @@ cleaned_data %>%
 * Response variables:
   + Concentrations of six different POPs in liver in ug per kg liver wet weight.
 * Explanatory variables:
-  + Species (cod, haddock or saithe)
-  + year (must be kept in model)
+  + species (cod, haddock or saithe)
+  + year (in which fish was caught)
   + weight of fish (in g, omitted)
   + weight of liver (in g, omitted)
   + length of fish (in cm, log transformed for normality)
   + fat percentage (percentage of liver weight)
-  + lsi (liver somatic index: liver weight vs total weight, nutritional condition)
-  + fish age (years, omitted)
+  + lsi (liver somatic index or hepatosomatic index: liver weight vs total weight, nutritional condition)
+  + fish age (in years, omitted)
 
-From previous studies we know the effect of these variables will differ between species due to e.g. different physiology and feeding habits. Hence, including fish as a factor in a single model will require an advanced model and was not justified since comparisons between the levels of the different fish species were not important. Known confounders are fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content, hepatosomatic index and liver somatic index.
-
+From previous studies it is known that effect of these variables will differ between species, owing to their distinct physiology and feeding habits. Hence, a model was fitted to each species since comparisons between different fish species were not a priority. Known confounders are fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content and hepatosomatic or liver somatic index.
 
 ## Model selection
 
@@ -230,7 +231,7 @@ p_man %>% unnest(augment) %>%
 
 ```
 
-Some deviation from linearity, especially for HCB in haddock and cod.
+Some non-linear patterns observed e.g for HCB in haddock and cod, yet patterns are not systematic across species and contaminants. Thus, the current model was retained.
 
 ```{r}
 
@@ -329,7 +330,9 @@ data_tables <- data.frame(left_table = left_table,
                           right_table = right_table)
 
 data_tables %>% 
-  gt() %>% 
+  gt(
+    caption = "Shapiro-Wilk's test."
+  ) %>% 
   fmt_markdown(columns = TRUE) %>% #render cell contents as html
   cols_label(left_table = "Cod",
              mid_table = "Haddock",
@@ -338,7 +341,7 @@ data_tables %>%
 
 ```
 
-Deviation from normality is observed and p-values should be interpreted with caution.
+Deviation from normality is observed and p-values should be interpreted with caution. Bimodality observed for HCH appeared could not be linked to sampling location.
 
 ### Homoskedasticity
 
@@ -354,10 +357,9 @@ p_man %>%
   facet_grid(species ~ variable, scales = "free")
 ```
 
+No clear systematic patterns in the variance versus fitted value is observed, most showing relatively homoskedastic behavior.
 
 ### Multicollinearity
-
-VIFs were determined to be below 3 for each dependent variable.
 
 ```{r}
 cleaned_data %>%
@@ -372,31 +374,29 @@ cleaned_data %>%
   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
 ```
 
-
-However, it appears to be a decrease in LSI for haddock with year due to fish weight/size increase.
+VIFs were determined to be below 3 for each dependent variable. However, some collinearity e.g. a decrease in LSI for haddock with year due to fish weight/size increase is observed.
 
 ### Outliers
 
 ```{r}
-cleaned_data %>%
-  select(-variable, -value) %>%
-  mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
-  pivot_longer(cols = -"species", names_to = "variable", values_to = "value") %>%
-  ggplot(aes(value)) +
-  geom_histogram(bins = 50) +
-  facet_grid(species ~ variable, scales = "free")+ theme(
-      axis.text.x = element_text(angle = 90, hjust = 1)
-    )
-
-cleaned_data %>%
-  select(-variable, -value) %>%
-  mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
-  pivot_longer(cols = -"species", names_to = "variable", values_to = "value") %>%
-  ggplot(aes(value)) + geom_boxplot() + facet_grid(species ~ variable, scales = "free")+ theme(
-      axis.text.x = element_text(angle = 90, hjust = 1)
-    )
+# cleaned_data %>%
+#   select(-variable, -value) %>%
+#   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+#   pivot_longer(cols = -"species", names_to = "variable", values_to = "value") %>%
+#   ggplot(aes(value)) +
+#   geom_histogram(bins = 50) +
+#   facet_grid(species ~ variable, scales = "free")+ theme(
+#       axis.text.x = element_text(angle = 90, hjust = 1)
+#     )
+# 
+# cleaned_data %>%
+#   select(-variable, -value) %>%
+#   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+#   pivot_longer(cols = -"species", names_to = "variable", values_to = "value") %>%
+#   ggplot(aes(value)) + geom_boxplot() + facet_grid(species ~ variable, scales = "free")+ theme(
+#       axis.text.x = element_text(angle = 90, hjust = 1)
+#     )
 ```
-
 Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning above.
 
 ## Partial residuals
@@ -510,7 +510,7 @@ p_man %>%
     "PBDE"
   )))
 
-ggsave("conditional_pr_stepan_data.svg", width = 8, height = 6)
+ggsave("conditional_pr_stepan_data.svg", width = 11, height = 6)
 
 # comditional jtools and visreg
 # p_man$visreg[[18]] + scale_y_continuous(breaks = pretty_breaks(n = 10))
@@ -530,7 +530,8 @@ p_man %>% clean_names() %>%
   filter(term == "year") %>%
   select(species, variable, p.value, estimate) %>%
   mutate(estimate = 10^estimate - 1) %>%
-  gt(groupname_col = "variable",
+  gt(caption = "Percentage decrease per year.",
+     groupname_col = "variable",
      rowname_col = "species") %>% 
   tab_style(
     location = cells_body(
@@ -555,48 +556,10 @@ p_man %>% clean_names() %>%
 
 ### Visualization without log-transformation
 
-```{r OLD-quick}
-# library(ggh4x)
-# 
-# pmtest <- p_man %>%
-#   unnest(data) %>%
-#   select(value, lsi_pc, fat_pc, year, length_cm) %>%
-#   ungroup() %>%
-#   mutate(
-#     value = 10^value - 1
-#   )
-# 
-# pmtest %>%
-#   ggplot(aes(year, value)) +
-#   geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
-#   theme_bw() +
-#   theme(
-#     axis.text.x = element_text(angle = 90, hjust = 1),
-#     legend.key = element_blank(),
-#     strip.background = element_rect(colour = "black", fill = "white"),
-#     strip.text.x = element_text(face = "bold"),
-#     strip.text.y = element_text(face = "bold")
-#   ) +
-#   scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
-#   ylab("Concentration [\u00b5g/kg]") +
-#   xlab("Year") +
-#   facet_grid2(species ~ factor(variable, levels = c(
-#     "PCB7",
-#     "DDT",
-#     "HCH",
-#     "HCB",
-#     "TNC",
-#     "PBDE"
-#   )),
-#   scales = "free_y", independent = "y"
-#   )
-
-```
-
-
 ```{r}
-cleaned_data <- raw_data %>%
-    # log transform response variables and covariate length
+
+cleaned_data_notrans <- raw_data %>%
+    # log transform covariate length
     mutate(across(.cols = matches("w_w"), .fn = ~ as.numeric(.x))) %>%
     mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
     mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g"), .fn = ~ as.numeric(.x))) %>%
@@ -621,7 +584,7 @@ cleaned_data <- raw_data %>%
       lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
     )
 
-p_man <- cleaned_data %>%
+p_man_notrans <- cleaned_data_notrans %>%
   ungroup() %>%
   group_by(species, variable) %>%
   drop_na(value) %>%
@@ -702,7 +665,7 @@ p_man <- cleaned_data %>%
     vifs = map(model, ~ car::vif(.x) %>% as_tibble())
     )
 
-p_man %>%
+p_man_notrans %>%
   unnest(tidy_coeff, partial_resids, data, normal_resids, augment) %>%
   ungroup() %>%
   ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
@@ -741,10 +704,348 @@ p_man %>%
   )), scales = "free_y", independent = "y")
 ```
 
+## Regression tables
+
+
+```{r using-gt-only-cod}
+
+
+# Cod
+Cod_reg_tab <- rbind(
+  p_man %>%
+    filter(species == "Cod") %>%
+    ungroup() %>%
+    select(variable, model, tidy, glance, augment) %>%
+    unnest(tidy) %>%
+    select(-model, -glance, -augment) %>%
+    select(-std.error, -statistic) %>%
+    pivot_longer(cols = c(estimate, p.value), names_to = "property") %>%
+    pivot_wider(names_from = variable, values_from = value) %>%
+    mutate(
+      term = str_replace_all(term, c(
+        "year" = "Year",
+        "length_cm" = "Length",
+        "fat_pc" = "Fat %",
+        "lsi_pc" = "LSI %"
+      ))
+    ) %>%
+    filter(!str_detect(term, "tercept")) %>%
+    ungroup(),
+  p_man %>%
+    filter(species == "Cod") %>%
+    ungroup() %>%
+    select(variable, model, tidy, glance, augment) %>%
+    unnest(glance) %>%
+    select(-model, -tidy, -augment) %>%
+    mutate(term = "Model") %>%
+    select(variable, term, adj.r.squared, statistic, p.value, nobs) %>%
+    rename(n_obs = nobs, F.statistic = statistic) %>%
+    pivot_longer(cols = -c(variable, term), names_to = "property") %>%
+    pivot_wider(names_from = "variable", values_from = "value")
+) %>%
+  gt(
+    caption = "Regression summary table for Cod, bold indicating non-significant coefficients.",
+    groupname_col = "term",
+    rowname_col = "property"
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    decimals = 3
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    rows = property == "n_obs",
+    decimals = 0
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    rows = property == "F.statistic",
+    decimals = 0
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = PCB7,
+      rows = property == "p.value" & (PCB7 > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = DDT,
+      rows = property == "p.value" & (DDT > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = HCH,
+      rows = property == "p.value" & (HCH > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = HCB,
+      rows = property == "p.value" & (HCB > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = TNC,
+      rows = property == "p.value" & (TNC > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = PBDE,
+      rows = property == "p.value" & (PBDE > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(
+      columns = everything()
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups(groups = everything())
+  ) %>% tab_header("Cod")
+  Cod_reg_tab
+  gtsave(Cod_reg_tab, "Cod_reg_tab.docx")
+  
+
+```
+
+
+```{r gt-only-haddock}
+# Haddock
+Haddock_reg_tab <- rbind(
+  p_man %>%
+    filter(species == "Haddock") %>%
+    ungroup() %>%
+    select(variable, model, tidy, glance, augment) %>%
+    unnest(tidy) %>%
+    select(-model, -glance, -augment) %>%
+    select(-std.error, -statistic) %>%
+    pivot_longer(cols = c(estimate, p.value), names_to = "property") %>%
+    pivot_wider(names_from = variable, values_from = value) %>%
+    mutate(
+      term = str_replace_all(term, c(
+        "year" = "Year",
+        "length_cm" = "Length",
+        "fat_pc" = "Fat %",
+        "lsi_pc" = "LSI %"
+      ))
+    ) %>%
+    filter(!str_detect(term, "tercept")) %>%
+    ungroup(),
+  p_man %>%
+    filter(species == "Haddock") %>%
+    ungroup() %>%
+    select(variable, model, tidy, glance, augment) %>%
+    unnest(glance) %>%
+    select(-model, -tidy, -augment) %>%
+    mutate(term = "Model") %>%
+    select(variable, term, adj.r.squared, statistic, p.value, nobs) %>%
+    rename(n_obs = nobs, F.statistic = statistic) %>%
+    pivot_longer(cols = -c(variable, term), names_to = "property") %>%
+    pivot_wider(names_from = "variable", values_from = "value")
+) %>%
+  gt(
+    caption = "Regression summary table for Haddock, bold indicating non-significant coefficients.",
+    groupname_col = "term",
+    rowname_col = "property"
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    decimals = 3
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    rows = property == "n_obs",
+    decimals = 0
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    rows = property == "F.statistic",
+    decimals = 0
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = PCB7,
+      rows = property == "p.value" & (PCB7 > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = DDT,
+      rows = property == "p.value" & (DDT > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = HCH,
+      rows = property == "p.value" & (HCH > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = HCB,
+      rows = property == "p.value" & (HCB > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = TNC,
+      rows = property == "p.value" & (TNC > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = PBDE,
+      rows = property == "p.value" & (PBDE > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(
+      columns = everything()
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups(groups = everything())
+  ) %>% tab_header("Haddock")
+  Haddock_reg_tab
+  gtsave(Haddock_reg_tab, "Haddock_reg_tab.docx")
+  
+ 
+```
+
+```{r gt-only-saithe}
+ # Saithe
+Saithe_reg_tab <- rbind(
+  p_man %>%
+    filter(species == "Saithe") %>%
+    ungroup() %>%
+    select(variable, model, tidy, glance, augment) %>%
+    unnest(tidy) %>%
+    select(-model, -glance, -augment) %>%
+    select(-std.error, -statistic) %>%
+    pivot_longer(cols = c(estimate, p.value), names_to = "property") %>%
+    pivot_wider(names_from = variable, values_from = value) %>%
+    mutate(
+      term = str_replace_all(term, c(
+        "year" = "Year",
+        "length_cm" = "Length",
+        "fat_pc" = "Fat %",
+        "lsi_pc" = "LSI %"
+      ))
+    ) %>%
+    filter(!str_detect(term, "tercept")) %>%
+    ungroup(),
+  p_man %>%
+    filter(species == "Saithe") %>%
+    ungroup() %>%
+    select(variable, model, tidy, glance, augment) %>%
+    unnest(glance) %>%
+    select(-model, -tidy, -augment) %>%
+    mutate(term = "Model") %>%
+    select(variable, term, adj.r.squared, statistic, p.value, nobs) %>%
+    rename(n_obs = nobs, F.statistic = statistic) %>%
+    pivot_longer(cols = -c(variable, term), names_to = "property") %>%
+    pivot_wider(names_from = "variable", values_from = "value")
+) %>%
+  gt(
+    caption = "Regression summary table for Saithe, bold indicating non-significant coefficients.",
+    groupname_col = "term",
+    rowname_col = "property"
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    decimals = 3
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    rows = property == "n_obs",
+    decimals = 0
+  ) %>%
+  fmt_number(
+    columns = matches("[A-Z]{2}"),
+    rows = property == "F.statistic",
+    decimals = 0
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = PCB7,
+      rows = property == "p.value" & (PCB7 > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = DDT,
+      rows = property == "p.value" & (DDT > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = HCH,
+      rows = property == "p.value" & (HCH > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = HCB,
+      rows = property == "p.value" & (HCB > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = TNC,
+      rows = property == "p.value" & (TNC > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    location = cells_body(
+      columns = PBDE,
+      rows = property == "p.value" & (PBDE > 0.05)
+    ),
+    style = list(cell_text(weight = "bold"))
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels(
+      columns = everything()
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_row_groups(groups = everything())
+  ) %>% tab_header("Saithe")
+  Saithe_reg_tab
+  gtsave(Saithe_reg_tab, "Saithe_reg_tab.docx")
+```
+
+
 
 ## Method description
 
-Additional statistical analyses for the determination of temporal trends were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted to the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the supplementary material, model validation revealed some violations of the model assumptions. As such, marginal effects were interpreted with caution.
+Additional statistical analyses for the determination of temporal trends were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted to the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the supplementary material, model validation revealed some departure from model assumptions. As such, minor and marginally significant effects were interpreted with caution.
 
 
 ## References
