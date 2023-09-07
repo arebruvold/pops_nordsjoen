@@ -1,5 +1,5 @@
 ---
-title: "Six groups of persistent organic pollutants show varying temporal trends in three North Sea gadoid fish species: Data treatment and statistical analysis"
+title: "Varying temporal trends in the levels of six groups of legacy persistent organic pollutants (POPs) in liver of three gadoid species from the North Sea: Data treatment and statistical analysis"
 output:
   bookdown::html_document2:
     theme: journal
@@ -32,11 +32,50 @@ library(modelr)
 library(gt)
 library(car)
 library(ggh4x)
+theme_set(theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.key = element_blank(),
+    strip.background = element_rect(colour="black", fill="white"),
+    strip.text.x = element_text(face = "bold"),
+    strip.text.y = element_text(face = "bold")
+  ))
 ```
 
 ## Data cleaning
 
 ```{r}
+  cleaned_data_w_age <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
+    clean_names() %>% 
+    select(species, year, alder_y, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w")) %>%
+    drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>%
+    mutate(across(.cols = -species, .fn = ~ as.numeric(.x))) %>% 
+    # log transform response variables and covariate length
+    mutate(across(.cols = matches("w_w"), .fn = ~ log10(as.numeric(.x) + 1))) %>%
+    mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
+    mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g|alder"), .fn = ~ as.numeric(.x))) %>%
+    rename_with(
+      ~ str_replace_all(.x, c(
+        "w_w" = "ww",
+        "^s" = "",
+        "fettinnhold_percent" = "fat_pc",
+        "lsi_percent" = "lsi_pc"
+      )) %>%
+        str_to_lower(),
+      .cols = !matches("species")
+    ) %>%
+    # remove obs with no POP data
+    filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
+    pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>%
+    # update two values found to be incorrectly entered
+    mutate(
+      hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
+      lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g / hel_vekt_g, lsi_pc),
+      hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
+      lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
+    )
+
+
   raw_data <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
     clean_names() %>%
     select(species, year, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w")) %>%
@@ -104,14 +143,11 @@ cleaned_data %>%
   + lsi (liver somatic index or hepatosomatic index: liver weight vs total weight, nutritional condition)
   + fish age (in years, omitted)
 
-From previous studies it is known that effect of these variables will differ between species, owing to their distinct physiology and feeding habits. Hence, a model was fitted to each species since comparisons between different fish species were not a priority. Known confounders are fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content and hepatosomatic or liver somatic index.
+From previous studies it was known that effect of these variables will differ between species, owing to their distinct physiology and feeding habits. Hence, a model was fitted to each species as comparisons between different fish species were not a priority. Known confounders are fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content and hepatosomatic or liver somatic index.
 
 ## Model selection
 
-* Main hypotheses:
-  + **Is there a time trend for any of the contaminants in any of the species?**
-
-One identical model was chosen, fitted to each different dataset (3 species x  6 contaminants = 18). This is justified as including an additional explanatory variable should be inconsequential due to the large number of observations. Due to collinearity with lsi and fish length, weight of liver and fish was omitted. Fish age was omitted due to missingness of a substantial fraction of observations and collinearity with fish length. As such, a linear model including explanatory variables year, fish length, fat percentage and lsi was chosen.
+To investigate the hypothesis, "*is there a time trend for any of the contaminants in any of the species?*", one identical model was chosen and fitted to each different dataset (3 species x  6 contaminants = 18). This was justified as including an additional explanatory variable should be inconsequential due to the large number of observations. Due to collinearity with lsi and fish length, weight of liver and fish was omitted. Fish age was omitted due to missingness of a substantial fraction of observations and collinearity with fish length. As such, a linear model including explanatory variables year, fish length, fat percentage and lsi was chosen.
 
 
 ## Model fitting
@@ -341,7 +377,7 @@ data_tables %>%
 
 ```
 
-Deviation from normality is observed and p-values should be interpreted with caution. Bimodality observed for HCH appeared could not be linked to sampling location.
+Deviation from normality is observed and p-values should be interpreted with caution. Bimodality observed for HCH could not be linked to sampling location.
 
 ### Homoskedasticity
 
@@ -359,9 +395,10 @@ p_man %>%
 
 No clear systematic patterns in the variance versus fitted value is observed, most showing relatively homoskedastic behavior.
 
-### Multicollinearity
+### Collinearity
 
 ```{r}
+# year
 cleaned_data %>%
   select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
@@ -372,9 +409,47 @@ cleaned_data %>%
       axis.text.x = element_text(angle = 90, hjust = 1)
     )+
   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
+
+# # fat_pc
+# cleaned_data %>%
+#   select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
+#   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+#   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
+#   ggplot(aes(as_factor(year), value)) +
+#   geom_point() + geom_boxplot()+
+#   theme(
+#       axis.text.x = element_text(angle = 90, hjust = 1)
+#     )+
+#   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
+# 
+# # lsi_pc
+# cleaned_data %>%
+#   select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
+#   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+#   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
+#   ggplot(aes(as_factor(year), value)) +
+#   geom_point() + geom_boxplot()+
+#   theme(
+#       axis.text.x = element_text(angle = 90, hjust = 1)
+#     )+
+#   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
+# 
+# # length_cm
+# cleaned_data %>%
+#   select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
+#   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+#   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
+#   ggplot(aes(as_factor(year), value)) +
+#   geom_point() + geom_boxplot()+
+#   theme(
+#       axis.text.x = element_text(angle = 90, hjust = 1)
+#     )+
+#   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
 ```
 
 VIFs were determined to be below 3 for each dependent variable. However, some collinearity e.g. a decrease in LSI for haddock with year due to fish weight/size increase is observed.
+
+
 
 ### Outliers
 
@@ -398,6 +473,112 @@ VIFs were determined to be below 3 for each dependent variable. However, some co
 #     )
 ```
 Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning above.
+
+## PCB and HCB levels
+
+```{r pcb-hcb}
+  pcb_hcb <- read_excel("data/20230907_Datasettet med PCB6.xlsx", skip = 1) %>%
+    clean_names() %>% 
+    select(species, year, alder_y, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w|pcb")) %>%
+    drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>%
+    mutate(across(.cols = -species, .fn = ~ as.numeric(.x))) %>% 
+    mutate(across(.cols = matches("length_cm"), .fn = ~ as.numeric(.x))) %>%
+    mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g|alder|pcb"), .fn = ~ as.numeric(.x))) %>%
+    rename_with(
+      ~ str_replace_all(.x, c(
+        "w_w" = "ww",
+        "^s" = "",
+        "fettinnhold_percent" = "fat_pc",
+        "lsi_percent" = "lsi_pc"
+      )) %>%
+        str_to_lower(),
+      .cols = !matches("species")
+    ) %>%
+    # remove obs with no POP data
+    filter(if_any(matches("ww|pcb"), ~ !is.na(.x))) %>%
+    pivot_longer(cols = matches("ww|pcb"), names_to = "variable", values_to = "value") %>%
+    # update two values found to be incorrectly entered
+    mutate(
+      hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
+      lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g / hel_vekt_g, lsi_pc),
+      hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
+      lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
+    )
+
+
+
+
+pcb_hcb %>%
+  filter(variable %in% c("pcb6", "hcb_ww")) %>% ungroup() %>% 
+  mutate(hline_leg = if_else(variable == "pcb6", 200, 10) %>%
+           as.numeric()) %>% 
+  # unnest(data) %>%
+  # mutate(value = 10^value - 1) %>%
+  filter(value < 1500) %>%
+  ggplot(aes(year, value, group = year)) +
+  geom_jitter(width = 0.35, size = 0.3) +
+  geom_boxplot(outlier.shape = NA, width = 1.65) +
+  scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+  stat_summary(fun.y = mean, geom = "point", shape = 3, size = 1.8, color = "red", fill = "red") +
+  geom_hline(na.rm = TRUE, aes(yintercept = hline_leg), color = "red", linetype = "dashed") +
+    scale_y_continuous(breaks = pretty_breaks(n = 6))+
+
+  ylab("Concentration [\u00b5g/kg]") +
+  xlab("Year") +
+  facet_grid(variable ~ species, scales = "free")
+
+ggsave("hcb_pcb_reg.svg", width = 6, height = 3.5)
+```
+
+## Bivariate correlations
+
+### LSI DDTs and HCHs in Haddock 
+
+```{r bivar-cor}
+p_man %>% 
+  filter(variable %in% c("DDT", "HCH"),
+         species == "Haddock") %>% unnest(data) %>% 
+  mutate(value = 10^value - 1) %>%
+  ggplot(aes(lsi_pc, value))+
+  geom_point(size = 0.5) + 
+  geom_smooth(method = "lm", color = "red", size = 0.75) + 
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))+
+  facet_wrap(~variable, scales = "free") + 
+    ylab("Concentration [\u00b5g/kg]") +
+  xlab("LSI [%]")
+ggsave("ddt_hch_bivar.svg", width = 9, height = 3)
+```
+
+### PCB7 and DDT versus age
+
+```{r}
+cleaned_data_w_age %>%
+  mutate(
+    variable = toupper(variable) %>% str_replace_all("_WW", "")
+  ) %>% 
+  filter(variable %in% c("DDT", "PCB7"),
+         species == "Cod") %>% 
+  mutate(value = 10^value - 1) %>%
+  ggplot(aes(alder_y, value))+
+  geom_point(size = 0.5) + 
+  geom_smooth(method = "lm", color = "red", size = 0.75) + 
+  scale_x_continuous(breaks = pretty_breaks(n = 5))+
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5))+
+  facet_wrap(~factor(variable, levels = c(
+    "PCB7",
+    "DDT",
+    "HCH",
+    "HCB",
+    "TNC",
+    "PBDE"
+  )), scales = "free",
+             ) + 
+    ylab("Concentration [\u00b5g/kg]") +
+  xlab("Age [years]")
+ggsave("pcb_ddt_age.svg", width = 9, height = 3)
+  
+```
+
 
 ## Partial residuals
 
@@ -447,14 +628,6 @@ p_man %>%
   #                                    nudge.from = "jittered"))+
   ### TEST COND PART RESID END
   stat_smooth(method = "lm", na.rm = TRUE, se = FALSE, color = "red", size = 0.5) +
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1),
-    legend.key = element_blank(),
-    strip.background = element_rect(colour="black", fill="white"),
-    strip.text.x = element_text(face = "bold"),
-    strip.text.y = element_text(face = "bold")
-  ) +
   # conditional coloring percentage change
   geom_text(
    data = p_man %>% group_by(species, variable) %>%
@@ -553,6 +726,66 @@ p_man %>% clean_names() %>%
   tab_footnote("Estimated annual percentage change obtained by exponentiation and corresponding p-values. Green color represents a significant decrease at the p = 0.05 level, while red color indicates a significant increase.")
 
 ```
+
+```{r lsi-fat-str-of-change}
+p_man %>% clean_names() %>%
+  select(species, variable, tidy) %>%
+  unnest(tidy) %>% 
+  filter(term == "lsi_pc") %>%
+  select(species, variable, p.value, estimate) %>%
+  mutate(estimate = 10^estimate - 1) %>%
+  gt(caption = "Percentage change per percentage increase in lsi",
+     groupname_col = "variable",
+     rowname_col = "species") %>% 
+  tab_style(
+    location = cells_body(
+      columns = estimate,
+      rows = estimate > 0 & p.value < 0.05
+    ),
+    style = list(cell_text(color = "red"))
+  ) %>% 
+  
+    tab_style(
+    location = cells_body(
+      columns = estimate,
+      rows = estimate < 0 & p.value < 0.05
+    ),
+    style = list(cell_text(color = "green"))
+  ) %>% 
+  fmt_number(everything(), decimals = 3) %>% 
+  fmt_percent(estimate, decimals = 1) %>% 
+  tab_footnote("Estimated percentage change per percent LSI increase obtained by exponentiation and corresponding p-values. Green color represents a significant decrease at the p = 0.05 level, while red color indicates a significant increase.")
+
+p_man %>% clean_names() %>%
+  select(species, variable, tidy) %>%
+  unnest(tidy) %>% 
+  filter(term == "fat_pc") %>%
+  select(species, variable, p.value, estimate) %>%
+  mutate(estimate = 10^estimate - 1) %>%
+  gt(caption = "Percentage change per percentage increase in fat",
+     groupname_col = "variable",
+     rowname_col = "species") %>% 
+  tab_style(
+    location = cells_body(
+      columns = estimate,
+      rows = estimate > 0 & p.value < 0.05
+    ),
+    style = list(cell_text(color = "red"))
+  ) %>% 
+  
+    tab_style(
+    location = cells_body(
+      columns = estimate,
+      rows = estimate < 0 & p.value < 0.05
+    ),
+    style = list(cell_text(color = "green"))
+  ) %>% 
+  fmt_number(everything(), decimals = 3) %>% 
+  fmt_percent(estimate, decimals = 1) %>% 
+  tab_footnote("Estimated percentage change per percent fat increase obtained by exponentiation and corresponding p-values. Green color represents a significant decrease at the p = 0.05 level, while red color indicates a significant increase.")
+
+```
+
 
 ### Visualization without log-transformation
 
@@ -681,7 +914,7 @@ p_man_notrans %>%
   #                                    direction = "as.is",
   #                                    nudge.from = "jittered"))+
   ### TEST COND PART RESID END
-  # geom_smooth()+
+  geom_smooth(method = "lm", color = "orange")+
   theme_bw() +
   theme(
     axis.text.x = element_text(angle = 90, hjust = 1),
@@ -1041,11 +1274,115 @@ Saithe_reg_tab <- rbind(
   gtsave(Saithe_reg_tab, "Saithe_reg_tab.docx")
 ```
 
+## Graphical abstract
+
+```{r}
+# p_man %>%
+#   unnest(tidy_coeff, partial_resids, data, normal_resids, augment) %>%
+#   ungroup() %>%
+#   ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
+#   geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
+#   stat_smooth(method = "lm", na.rm = TRUE, se = FALSE, color = "red", size = 0.5) +
+#   # conditional coloring percentage change
+#   geom_text(
+#    data = p_man %>% group_by(species, variable) %>%
+#      distinct(year_estimate, .keep_all = TRUE),
+#    color =
+#      case_when(
+#        p_man %>% group_by(species, variable) %>%
+#          distinct(year_estimate) %>% pull(year_estimate) > 0 &
+#          p_man %>%
+#            group_by(species, variable) %>%
+#            distinct(year_pval) %>%
+#            pull(year_pval) < 0.05 ~ "red",
+#        p_man %>% group_by(species, variable) %>%
+#          distinct(year_estimate) %>% pull(year_estimate) < 0 &
+#          p_man %>%
+#            group_by(species, variable) %>%
+#            distinct(year_pval) %>%
+#            pull(year_pval) < 0.05 ~ "green",
+#        TRUE ~ "black"
+#      ),
+#    fontface = "bold",
+#    x = -Inf, y = Inf, hjust = -0.075, vjust = 1.5,
+#    size = p_man %>% group_by(species, variable) %>%
+#          distinct(year_estimate) %>% pull(year_estimate) %>% as.numeric() %>% abs()*150/14 + 2.3,
+#    # size = 3.7,
+#    aes(label = paste0(round(year_estimate %>% as.numeric() * 100, digits = 1) %>% number(style_positive = "plus", accuracy = 0.1), "%"))
+#  )+
+#   # p-values
+#     geom_text(
+#     data = p_man %>% group_by(species, variable) %>%
+#       distinct(year_pval, .keep_all = TRUE), color = "grey30",
+#     x = 2004.9, y = 0.1, hjust = 0, vjust = 0.6, size = 2.5,
+#     aes(label = paste0("p = ", round(year_pval %>% as.numeric(), digits = 3) %>% format(nsmall = 2)))
+#   ) +
+# 
+#   scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+#   scale_y_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3), limits = c(0, 3.2)) +
+#   ylab("log(Concentration + 1) [\u00b5g/kg]") +
+#   xlab("Year | (Length, Fat and LSI)") +
+#   
+#   theme_bw() +
+#   theme(
+#     axis.text.x = element_text(angle = 90, hjust = 1),
+#     legend.key = element_blank(),
+#     strip.background = element_rect(colour="black", fill="white"),
+#     strip.text.x = element_text(face = "bold"),
+#     strip.text.y = element_text(face = "bold"))+
+#   
+#     facet_grid(species ~ factor(variable, levels = c(
+#     "PCB7",
+#     "DDT",
+#     "HCH",
+#     "HCB",
+#     "TNC",
+#     "PBDE"
+#   )))
+# 
+# ggsave("graphical_abstr.svg", width = 11, height = 6)
+```
+
+
+## Stomach content of haddock and cod
+
+```{r}
+library(ggrepel)
+library(see)
+piedata <- read_excel("data/stomach_all_haddock_and_cod_all_stations_2011.xlsx", skip = 2) %>% 
+  select(1, Haddock, Cod) %>%
+  rename(c("Group" = 1)) %>%
+  pivot_longer(cols = -Group, names_to = "Species") %>%
+  group_by(Species) %>%
+  mutate(value = value / sum(value)) %>% 
+  mutate(
+  csum = rev(cumsum(rev(value))),
+  pos = value / 2 + lead(csum, 1),
+  pos = if_else(is.na(pos), value / 2, pos),
+  group_id = 15-row_number()
+)
+
+piedata %>%
+  mutate(Group = fct_reorder(Group, group_id)) %>% 
+  ggplot(aes(
+    x = "",
+    y = value,
+    fill = Group
+  )) +
+  geom_col() +
+  coord_polar(theta = "y") +
+  # guides(fill = guide_legend(title = "Group")) +
+  # theme_void() +
+  facet_wrap(~Species)
+ggsave("stommach_pie.svg", width = 9, height = 6)
+
+# https://r-charts.com/part-whole/donut-chart-ggplot2/
+```
 
 
 ## Method description
 
-Additional statistical analyses for the determination of temporal trends were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted to the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the supplementary material, model validation revealed some departure from model assumptions. As such, minor and marginally significant effects were interpreted with caution.
+Statistical analyses for the determination of temporal trends were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted to the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the supplementary material, model validation revealed some departure from model assumptions. As such, minor and marginally significant effects were interpreted with caution.
 
 
 ## References
