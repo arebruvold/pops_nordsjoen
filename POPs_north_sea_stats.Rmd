@@ -143,11 +143,9 @@ cleaned_data %>%
   + lsi (liver somatic index or hepatosomatic index: liver weight vs total weight, nutritional condition)
   + fish age (in years, omitted)
 
-From previous studies it was known that effect of these variables will differ between species, owing to their distinct physiology and feeding habits. Hence, a model was fitted to each species as comparisons between different fish species were not a priority. Known confounders are fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content and hepatosomatic or liver somatic index.
-
 ## Model selection
 
-To investigate the hypothesis, "*is there a time trend for any of the contaminants in any of the species?*", one identical model was chosen and fitted to each different dataset (3 species x  6 contaminants = 18). This was justified as including an additional explanatory variable should be inconsequential due to the large number of observations. Due to collinearity with lsi and fish length, weight of liver and fish was omitted. Fish age was omitted due to missingness of a substantial fraction of observations and collinearity with fish length. As such, a linear model including explanatory variables year, fish length, fat percentage and lsi was chosen.
+To investigate if there was a time trend for any contaminants in the three gadoid species, one identical model was chosen and fitted to each different dataset (3 species x 6 contaminants = 18). Potential confounders were fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content and hepatosomatic or liver somatic index (LSI). It was known that effect of these variables will differ between species, owing to their distinct physiology and feeding habits. Hence, a model was fitted to each species as comparisons between different fish species were not a priority. Due to collinearity with LSI and fish length, weight of liver and fish was omitted. Fish age was omitted due to missingness of a substantial fraction of observations and collinearity with fish length. As such, a multiple linear model including explanatory variables year, fish length, fat percentage and LSI was chosen. Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning. 
 
 
 ## Model fitting
@@ -267,7 +265,7 @@ p_man %>% unnest(augment) %>%
 
 ```
 
-Some non-linear patterns observed e.g for HCB in haddock and cod, yet patterns are not systematic across species and contaminants. Thus, the current model was retained.
+Some non-linear patterns observed e.g for HCB in haddock and cod, yet patterns are not systematic across species and contaminant. Thus, the current model was retained.
 
 ```{r}
 
@@ -321,61 +319,6 @@ ggplot(p_man %>% unnest(augment), aes(value)) +
 ```
 
 
-#### Shapiro-Wilk's test
-
-
-```{r shapiro-3col}
-shap_table <- p_man %>% unnest(augment) %>% group_by(species, variable) %>% summarise(shapiro = shapiro.test(.std.resid) %>% tidy()) %>% unnest(shapiro) %>% select(-method, -statistic)
-
-fish_table <- function(x){
-  gt(x) %>% 
-    tab_style(
-    location = cells_body(
-      columns = p.value,
-      rows = p.value < 0.05
-    ),
-    style = list(cell_text(color = "red"))
-  ) %>% fmt_number(columns = 2, decimals = 3) %>% 
-    tab_options(column_labels.hidden = TRUE) %>% 
-    as_raw_html() # return as html
-}
-
-left_table <- 
-  shap_table %>% 
-  filter(species == "Cod") %>% 
-  ungroup() %>% 
-  select(-species) %>% 
-  fish_table()
-
-mid_table <- 
-  shap_table %>% 
-  filter(species == "Haddock") %>%
-    ungroup() %>% 
-  select(-species) %>% 
-  fish_table()
-
-right_table <- 
-  shap_table %>% 
-  filter(species == "Saithe") %>%
-    ungroup() %>% 
-  select(-species) %>% 
-  fish_table()
-
-data_tables <- data.frame(left_table = left_table,
-                          mid_table = mid_table,
-                          right_table = right_table)
-
-data_tables %>% 
-  gt(
-    caption = "Shapiro-Wilk's test."
-  ) %>% 
-  fmt_markdown(columns = TRUE) %>% #render cell contents as html
-  cols_label(left_table = "Cod",
-             mid_table = "Haddock",
-             right_table = "Saithe") %>% 
-  tab_footnote("Red text indicates p-value < 0.05.")
-
-```
 
 Deviation from normality is observed and p-values should be interpreted with caution. Bimodality observed for HCH could not be linked to sampling location.
 
@@ -405,6 +348,7 @@ cleaned_data %>%
   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
   ggplot(aes(as_factor(year), value)) +
   geom_point() + geom_boxplot()+
+    stat_summary(fun = "mean", geom = "point", color = "red", size = 3, shape = 3)+
   theme(
       axis.text.x = element_text(angle = 90, hjust = 1)
     )+
@@ -450,7 +394,6 @@ cleaned_data %>%
 VIFs were determined to be below 3 for each dependent variable. However, some collinearity e.g. a decrease in LSI for haddock with year due to fish weight/size increase is observed.
 
 
-
 ### Outliers
 
 ```{r}
@@ -474,7 +417,7 @@ VIFs were determined to be below 3 for each dependent variable. However, some co
 ```
 Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning above.
 
-## PCB and HCB levels
+## PCB6 and HCB levels
 
 ```{r pcb-hcb}
   pcb_hcb <- read_excel("data/20230907_Datasettet med PCB6.xlsx", skip = 1) %>%
@@ -506,15 +449,13 @@ Two outliers were identified in LSI. Upon further investigation, it was determin
     )
 
 
-
-
 pcb_hcb %>%
   filter(variable %in% c("pcb6", "hcb_ww")) %>% ungroup() %>% 
   mutate(hline_leg = if_else(variable == "pcb6", 200, 10) %>%
            as.numeric()) %>% 
   # unnest(data) %>%
   # mutate(value = 10^value - 1) %>%
-  filter(value < 1500) %>%
+  filter(value < 1300) %>%
   ggplot(aes(year, value, group = year)) +
   geom_jitter(width = 0.35, size = 0.3) +
   geom_boxplot(outlier.shape = NA, width = 1.65) +
@@ -1376,13 +1317,12 @@ piedata %>%
   facet_wrap(~Species)
 ggsave("stommach_pie.svg", width = 9, height = 6)
 
-# https://r-charts.com/part-whole/donut-chart-ggplot2/
 ```
 
 
 ## Method description
 
-Statistical analyses for the determination of temporal trends were carried out in R version 4.2.1. Data with missing covariates or response variables were removed, and response variables were added one prior to logtransformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The covariate length was also logtransformed. To correct for known confounders, a multiple linear regression model with the covariates year, length, fat percentage and liver somatic index was fitted to the cleaned and transformed data for each POP and species. To visually demonstrate the effect of year on the POP concentrations correcting for other dependent variables, the conditional partial residuals versus year was plotted, keeping length, fat and lsi constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the supplementary material, model validation revealed some departure from model assumptions. As such, minor and marginally significant effects were interpreted with caution.
+*Visualizations in the manuscript and statistical analyses for the determination of temporal trends were carried out in R version 4.2.1. Data with missing dependent or response variables were removed, and response variables were added one prior to log-transformation with base 10 to meet assumptions of homoscedasticity and normality while preserving zero-valued observations. The dependent variable length was also log-transformed. To correct for known confounders, a multiple linear regression model with the dependent variables year, fish length, liver fat content and liver somatic index (LSI) was fitted to the cleaned and transformed data for each POP and species. To visualize the effect of year on the POP concentrations corrected for the other dependent variables, the conditional partial residuals versus year were plotted, keeping length, fat and LSI constant at their median values. The significance of the regression coefficient for the year was determined using a Wald test to test the null hypothesis of no time trend. As detailed in the Supplementary Materials, model validation revealed some deviations from the model assumptions. Thus, marginally significant effects were interpreted with caution. More details regarding the statistical model are given in Supplementary Materials.*
 
 
 ## References
