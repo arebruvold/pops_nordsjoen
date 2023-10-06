@@ -45,6 +45,9 @@ theme_set(theme_bw() +
 ## Data cleaning
 
 ```{r}
+
+writeLines(capture.output(devtools::session_info()), "sessionInfo.txt")
+
   cleaned_data_w_age <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
     clean_names() %>% 
     select(species, year, alder_y, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w")) %>%
@@ -79,7 +82,7 @@ theme_set(theme_bw() +
   raw_data <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
     clean_names() %>%
     select(species, year, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w")) %>%
-    # drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>%
+    drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>%
     mutate(across(.cols = -species, .fn = ~ as.numeric(.x)))
 
   cleaned_data <- raw_data %>%
@@ -130,7 +133,7 @@ cleaned_data %>%
 
 * Observations:
   + Approx. 250 for each fish species (3) for each contaminant (6).
-  + For each year at least 41 observations for each species and contaminant except for cod in 2019, with only 9 observations.
+  + For each year at least 41 observations for each species and contaminant except for cod in 2019, with only 9 observations with complete data for fat percentage, LSI and fish length.
 * Response variables:
   + Concentrations of six different POPs in liver in ug per kg liver wet weight.
 * Explanatory variables:
@@ -140,12 +143,12 @@ cleaned_data %>%
   + weight of liver (in g, omitted)
   + length of fish (in cm, log transformed for normality)
   + fat percentage (percentage of liver weight)
-  + lsi (liver somatic index or hepatosomatic index: liver weight vs total weight, nutritional condition)
+  + LSI (liver somatic index or hepatosomatic index: liver weight vs total weight, nutritional condition)
   + fish age (in years, omitted)
 
 ## Model selection
 
-To investigate if there was a time trend for any contaminants in the three gadoid species, one identical model was chosen and fitted to each different dataset (3 species x 6 contaminants = 18). Potential confounders were fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content and hepatosomatic or liver somatic index (LSI). It was known that effect of these variables will differ between species, owing to their distinct physiology and feeding habits. Hence, a model was fitted to each species as comparisons between different fish species were not a priority. Due to collinearity with LSI and fish length, weight of liver and fish was omitted. Fish age was omitted due to missingness of a substantial fraction of observations and collinearity with fish length. As such, a multiple linear model including explanatory variables year, fish length, fat percentage and LSI was chosen. Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning. Additional three cods sampled in 2019 missed values for fat percentage and were not included for the statistical analyses.
+To investigate if there was a time trend for any contaminants in the three gadoid species, one identical model was chosen and fitted to each different dataset (3 species x 6 contaminants = 18). Potential confounders were fish age or proxies such as fish length and fish weight as well as liver weight, liver fat content and hepatosomatic or liver somatic index (LSI). It was known that effect of these variables will differ between species, owing to their distinct physiology and feeding habits. Hence, a model was fitted to each species as comparisons between different fish species were not a priority. Due to collinearity with LSI and fish length, weight of liver and fish was omitted. Fish age was omitted due to missingness of a substantial fraction of observations and collinearity with fish length. As such, a multiple linear model including explanatory variables year, fish length, fat percentage and LSI was chosen. Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning. Additional 3 cod samples in 2019 missed values for fat percentage and were not included for the statistical analyses.
 
 
 ## Model fitting
