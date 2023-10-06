@@ -3,5 +3,5 @@
 This repository contains the R-code to reproduce statistical analyses and visualizations for the manuscript submitted to Chemosphere.
 
 ### License
-The work is distributed under a [CC BY 4.0 Deed](https://creativecommons.org/licenses/by/4.0/) license.
+The work is distributed under a [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) license.
 
