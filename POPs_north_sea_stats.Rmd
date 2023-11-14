@@ -607,16 +607,21 @@ p_man %>%
     aes(label = paste0("p = ", round(year_pval %>% as.numeric(), digits = 3) %>% format(nsmall = 2)))
   ) +
   
+  theme(panel.grid.major = element_line(
+                                        size = 0.4))+
+  
   #   geom_text(
   #   data = p_man %>% unnest(tidy) %>% group_by(species, variable) %>%
   #     distinct(year_coeff, .keep_all = TRUE), color = "red",
   #   x = -Inf, y = Inf, hjust = -0.1, vjust = 3, size = 2.5,
   #   aes(label = paste0("slope = ", round(year_coeff %>% as.numeric(), digits = 4)))
   # ) +
-  scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+  scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010),
+                     minor_breaks = NULL) +
   scale_y_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3), limits = c(0, 3.2)) +
   ylab("log(Concentration + 1) [\u00b5g/kg]") +
   xlab("Year | (Length, Fat and LSI)") +
+  #change theme to make the minor and major tick lines in the background the same size
 
     facet_grid(species ~ factor(variable, levels = c(
     "PCB7",
