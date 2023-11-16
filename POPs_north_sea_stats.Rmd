@@ -36,82 +36,65 @@ theme_set(theme_bw() +
   theme(
     axis.text.x = element_text(angle = 90, hjust = 1),
     legend.key = element_blank(),
-    strip.background = element_rect(colour="black", fill="white"),
+    strip.background = element_rect(fill="white", color = "black"),
     strip.text.x = element_text(face = "bold"),
-    strip.text.y = element_text(face = "bold")
+    strip.text.y = element_text(face = "bold"),
+    text = element_text(family = "Times New Roman")
   ))
+
+# write session info to file
+writeLines(capture.output(devtools::session_info()), "sessionInfo.txt")
 ```
 
 ## Data cleaning
 
-```{r}
+```{r cleaning}
 
-writeLines(capture.output(devtools::session_info()), "sessionInfo.txt")
+raw_data <- map2(c(1:3), c("Haddock", "Saithe", "Cod"), ~ read_excel("data/Fullt_datasett_enkelte_kongenere_NS_torsk_hyse_sei.xlsx", skip = 0, sheet = .x) %>%
+  mutate(species = .y) %>%
+  clean_names() %>%
+  rename(
+    length_cm = matches("lengde|lengde_cm"),
+    liver_weight_g = matches("levervekt"),
+    fat_pc = matches("fettinnhold|percent_fett|fett_percent"),
+    lsi_pc = matches("lsi"),
+    tnc = matches("transnonaklor"),
+    sample_name = matches("^prove$"),
+    fish_weight_g = matches("^vekt_g$|vekt_av_fisk"),
+    bde_49_71 = matches("bde_49"),
+    year = matches("^ar$|^aar$"),
+    sum_pbde = sum,
+    sum_7pcb = pcb7,
+    sum_6pcb = pcb6
+  ) %>%
+  select(!matches("x31")) %>%
+  # convert all columns that are not species or sample_name to numeric
+  mutate(across(.cols = !matches("species|sample_name"), .fns = as.numeric))) %>%
+  reduce(rbind) %>%
+  # removing data with empty variables used for the model
+  drop_na(species, year, length_cm, fat_pc, lsi_pc)
 
-  cleaned_data_w_age <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
-    clean_names() %>% 
-    select(species, year, alder_y, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w")) %>%
-    drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>%
-    mutate(across(.cols = -species, .fn = ~ as.numeric(.x))) %>% 
-    # log transform response variables and covariate length
-    mutate(across(.cols = matches("w_w"), .fn = ~ log10(as.numeric(.x) + 1))) %>%
-    mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
-    mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g|alder"), .fn = ~ as.numeric(.x))) %>%
-    rename_with(
-      ~ str_replace_all(.x, c(
-        "w_w" = "ww",
-        "^s" = "",
-        "fettinnhold_percent" = "fat_pc",
-        "lsi_percent" = "lsi_pc"
-      )) %>%
-        str_to_lower(),
-      .cols = !matches("species")
-    ) %>%
-    # remove obs with no POP data
-    filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
-    pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>%
-    # update two values found to be incorrectly entered
-    mutate(
-      hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
-      lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g / hel_vekt_g, lsi_pc),
-      hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
-      lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
+predictors <- c("length_cm", "fish_weight_g", "liver_weight_g", "fat_pc", "lsi_pc", "year", "species", "sample_name", "alder")
+
+responses <- raw_data %>%
+  select(!all_of(predictors)) %>%
+  names()
+
+main_responses <- c("sum_7pcb", "hcb", "tnc", "sum_pbde", "sum_hch", "sum_ddt")
+
+cleaned_data <- raw_data %>%
+  mutate(
+    across(
+      .cols = matches(responses), .fn = ~ log10(as.numeric(.x) + 1)
     )
-
-
-  raw_data <- read_excel("data/20230424_nordsjoen_stepan.xlsx", skip = 1) %>%
-    clean_names() %>%
-    select(species, year, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w")) %>%
-    drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>%
-    mutate(across(.cols = -species, .fn = ~ as.numeric(.x)))
-
-  cleaned_data <- raw_data %>%
-    # log transform response variables and covariate length
-    mutate(across(.cols = matches("w_w"), .fn = ~ log10(as.numeric(.x) + 1))) %>%
-    mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
-    mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g"), .fn = ~ as.numeric(.x))) %>%
-    rename_with(
-      ~ str_replace_all(.x, c(
-        "w_w" = "ww",
-        "^s" = "",
-        "fettinnhold_percent" = "fat_pc",
-        "lsi_percent" = "lsi_pc"
-      )) %>%
-        str_to_lower(),
-      .cols = !matches("species")
-    ) %>%
-    # remove obs with no POP data
-    filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
-    pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>%
-    # update two values found to be incorrectly entered
-    mutate(
-      hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
-      lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g / hel_vekt_g, lsi_pc),
-      hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
-      lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
-    )
-
+  ) %>%
+  mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
+  filter(if_any(matches(main_responses), ~ !is.na(.x))) %>%
+  pivot_longer(cols = matches(responses), names_to = "variable", values_to = "value")
 ```
+
+
+
 
 
 ## Data description
@@ -168,7 +151,7 @@ pop_lm <- function(in_dat) {
 ```{r model-fit-partial}
 
 # conditional partial residuals manually calculated
-p_man <- cleaned_data %>%
+p_man <- cleaned_data %>% filter(variable %in% main_responses) %>% 
   ungroup() %>%
   group_by(species, variable) %>%
   drop_na(value) %>%
@@ -247,7 +230,8 @@ p_man <- cleaned_data %>%
   # vifs to check for collinearity
   mutate(
     vifs = map(model, ~ car::vif(.x) %>% as_tibble())
-    )
+    ) %>% 
+  arrange(species)
 
 ```
 
@@ -264,7 +248,16 @@ p_man %>% unnest(augment) %>%
     geom_point(size = 0.2) + 
     geom_hline(yintercept = 0, color = "red") +
   geom_smooth(method = "loess", formula = y ~ x, se = T, span = 2)+
-    facet_grid(species~variable, scales = "free")
+    facet_grid(species~factor(variable, levels = c(
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
+    "HCB",
+    "TNC",
+    "SUM_PBDE"
+  )), scales = "free",
+             )
+
 
 ```
 
@@ -279,21 +272,45 @@ p_man %>% unnest(augment) %>%
     geom_point(size = 0.2) + 
       geom_hline(yintercept = 0, color = "red") +
   geom_smooth(method = "loess", formula = y ~ x, se = T, span = 2)+
-    facet_grid(species~variable, scales = "free")
+    facet_grid(species~factor(variable, levels = c(
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
+    "HCB",
+    "TNC",
+    "SUM_PBDE"
+  )), scales = "free",
+             )
 
 p_man %>% unnest(augment) %>%
   ggplot(aes(fat_pc, .resid)) +
     geom_point(size = 0.2) + 
       geom_hline(yintercept = 0, color = "red") +
   geom_smooth(method = "loess", formula = y ~ x, se = T, span = 2)+
-    facet_grid(species~variable, scales = "free")
+    facet_grid(species~factor(variable, levels = c(
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
+    "HCB",
+    "TNC",
+    "SUM_PBDE"
+  )), scales = "free",
+             )
 
 p_man %>% unnest(augment) %>%
   ggplot(aes(lsi_pc, .resid)) +
     geom_point(size = 0.2) + 
     geom_hline(yintercept = 0, color = "red") +
   geom_smooth(method = "loess", formula = y ~ x, se = T, span = 2)+
-    facet_grid(species~variable, scales = "free")
+    facet_grid(species~factor(variable, levels = c(
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
+    "HCB",
+    "TNC",
+    "SUM_PBDE"
+  )), scales = "free",
+             )
 
 
 ```
@@ -308,7 +325,15 @@ p_man %>% unnest(augment) %>%
 ggplot(p_man %>% unnest(augment), aes(sample = value)) +
   stat_qq(size = 0.2) +
   stat_qq_line(color = "red", size = 0.4) +
-  facet_grid(species ~ variable, scales = "free")
+    facet_grid(species~factor(variable, levels = c(
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
+    "HCB",
+    "TNC",
+    "SUM_PBDE"
+  )), scales = "free",
+             )
 ```
 
 #### Distribution of response
@@ -318,7 +343,15 @@ ggplot(p_man %>% unnest(augment), aes(value)) +
     geom_histogram(aes(y=..density..), color='gray50',
         alpha=0.2, position = "identity")+
     geom_density(alpha=0.2, fill = "red")+
-  facet_grid(species ~ variable, scales = "free")
+    facet_grid(species~factor(variable, levels = c(
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
+    "HCB",
+    "TNC",
+    "SUM_PBDE"
+  )), scales = "free",
+             )
 ```
 
 
@@ -336,7 +369,15 @@ p_man %>%
   geom_point(size = 0.2) +
   geom_smooth(method = "loess", formula = y ~ x, span = 2, se = T, size = 0.5) +
   geom_smooth(method = "lm", formula = y ~ 1, se = FALSE, color = "red", size = 0.5, linetype="dashed", span = 2)+
-  facet_grid(species ~ variable, scales = "free")
+    facet_grid(species~factor(variable, levels = c(
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
+    "HCB",
+    "TNC",
+    "SUM_PBDE"
+  )), scales = "free",
+             )
 ```
 
 No clear systematic patterns in the variance versus fitted value is observed, most showing relatively homoskedastic behavior.
@@ -346,7 +387,7 @@ No clear systematic patterns in the variance versus fitted value is observed, mo
 ```{r}
 # year
 cleaned_data %>%
-  select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
+  select(-variable, -value, -fish_weight_g, -liver_weight_g, -sample_name) %>%
   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
   ggplot(aes(as_factor(year), value)) +
@@ -357,41 +398,7 @@ cleaned_data %>%
     )+
   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
 
-# # fat_pc
-# cleaned_data %>%
-#   select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
-#   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
-#   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
-#   ggplot(aes(as_factor(year), value)) +
-#   geom_point() + geom_boxplot()+
-#   theme(
-#       axis.text.x = element_text(angle = 90, hjust = 1)
-#     )+
-#   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
-# 
-# # lsi_pc
-# cleaned_data %>%
-#   select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
-#   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
-#   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
-#   ggplot(aes(as_factor(year), value)) +
-#   geom_point() + geom_boxplot()+
-#   theme(
-#       axis.text.x = element_text(angle = 90, hjust = 1)
-#     )+
-#   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
-# 
-# # length_cm
-# cleaned_data %>%
-#   select(-variable, -value, -hel_vekt_g, -lever_vekt_g) %>%
-#   mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
-#   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
-#   ggplot(aes(as_factor(year), value)) +
-#   geom_point() + geom_boxplot()+
-#   theme(
-#       axis.text.x = element_text(angle = 90, hjust = 1)
-#     )+
-#   ggh4x::facet_grid2(species ~ variable, scales = "free_y", independent = "y")
+
 ```
 
 VIFs were determined to be below 3 for each dependent variable. However, some collinearity e.g. a decrease in LSI for haddock with year due to fish weight/size increase is observed.
@@ -418,46 +425,18 @@ VIFs were determined to be below 3 for each dependent variable. However, some co
 #       axis.text.x = element_text(angle = 90, hjust = 1)
 #     )
 ```
-Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These errors were corrected during the data cleaning above.
+Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These were corrected in the raw data prior to import of the curated dataset. 
 
 ## PCB6 and HCB levels
 
 ```{r pcb-hcb}
-  pcb_hcb <- read_excel("data/20230907_Datasettet med PCB6.xlsx", skip = 1) %>%
-    clean_names() %>% 
-    select(species, year, alder_y, length_cm, fettinnhold_percent, lsi_percent, hel_vekt_g, lever_vekt_g, matches("w_w|pcb")) %>%
-    drop_na(species, year, length_cm, fettinnhold_percent, lsi_percent) %>%
-    mutate(across(.cols = -species, .fn = ~ as.numeric(.x))) %>% 
-    mutate(across(.cols = matches("length_cm"), .fn = ~ as.numeric(.x))) %>%
-    mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g|alder|pcb"), .fn = ~ as.numeric(.x))) %>%
-    rename_with(
-      ~ str_replace_all(.x, c(
-        "w_w" = "ww",
-        "^s" = "",
-        "fettinnhold_percent" = "fat_pc",
-        "lsi_percent" = "lsi_pc"
-      )) %>%
-        str_to_lower(),
-      .cols = !matches("species")
-    ) %>%
-    # remove obs with no POP data
-    filter(if_any(matches("ww|pcb"), ~ !is.na(.x))) %>%
-    pivot_longer(cols = matches("ww|pcb"), names_to = "variable", values_to = "value") %>%
-    # update two values found to be incorrectly entered
-    mutate(
-      hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
-      lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g / hel_vekt_g, lsi_pc),
-      hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
-      lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
-    )
 
-
-pcb_hcb %>%
-  filter(variable %in% c("pcb6", "hcb_ww")) %>% ungroup() %>% 
-  mutate(hline_leg = if_else(variable == "pcb6", 200, 10) %>%
+cleaned_data %>%
+  filter(variable %in% c("sum_6pcb", "hcb")) %>% ungroup() %>% 
+  mutate(hline_leg = if_else(variable == "sum_6pcb", 200, 10) %>%
            as.numeric()) %>% 
   # unnest(data) %>%
-  # mutate(value = 10^value - 1) %>%
+  mutate(value = 10^value - 1) %>%
   filter(value < 1300) %>%
   ggplot(aes(year, value, group = year)) +
   geom_jitter(width = 0.35, size = 0.3) +
@@ -471,7 +450,7 @@ pcb_hcb %>%
   xlab("Year") +
   facet_grid(variable ~ species, scales = "free")
 
-ggsave("hcb_pcb_reg.svg", width = 6, height = 3.5)
+ggsave("figures/hcb_pcb_reg.svg", width = 6, height = 3.5)
 ```
 
 ## Bivariate correlations
@@ -480,8 +459,8 @@ ggsave("hcb_pcb_reg.svg", width = 6, height = 3.5)
 
 ```{r bivar-cor}
 p_man %>% 
-  filter(variable %in% c("DDT", "HCH"),
-         species == "Haddock") %>% unnest(data) %>% 
+  filter(variable %in% c("SUM_DDT", "SUM_HCH"),
+         species == "Haddock") %>% unnest(data) %>%
   mutate(value = 10^value - 1) %>%
   ggplot(aes(lsi_pc, value))+
   geom_point(size = 0.5) + 
@@ -490,36 +469,36 @@ p_man %>%
   facet_wrap(~variable, scales = "free") + 
     ylab("Concentration [\u00b5g/kg]") +
   xlab("LSI [%]")
-ggsave("ddt_hch_bivar.svg", width = 9, height = 3)
+ggsave("figures/ddt_hch_bivar.svg", width = 9, height = 3)
 ```
 
 ### PCB7 and DDT versus age
 
 ```{r}
-cleaned_data_w_age %>%
+cleaned_data %>%
   mutate(
     variable = toupper(variable) %>% str_replace_all("_WW", "")
-  ) %>% 
-  filter(variable %in% c("DDT", "PCB7"),
-         species == "Cod") %>% 
+  ) %>%
+  filter(variable %in% c("SUM_DDT", "SUM_7PCB"),
+         species == "Cod") %>%
   mutate(value = 10^value - 1) %>%
-  ggplot(aes(alder_y, value))+
+  ggplot(aes(alder, value))+
   geom_point(size = 0.5) + 
   geom_smooth(method = "lm", color = "red", size = 0.75) + 
   scale_x_continuous(breaks = pretty_breaks(n = 5))+
   theme(axis.text.x = element_text(angle = 0, hjust = 0.5))+
   facet_wrap(~factor(variable, levels = c(
-    "PCB7",
-    "DDT",
-    "HCH",
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
     "HCB",
     "TNC",
-    "PBDE"
+    "SUM_PBDE"
   )), scales = "free",
              ) + 
     ylab("Concentration [\u00b5g/kg]") +
   xlab("Age [years]")
-ggsave("pcb_ddt_age.svg", width = 9, height = 3)
+ggsave("figures/pcb_ddt_age.svg", width = 9, height = 3)
   
 ```
 
@@ -619,22 +598,22 @@ p_man %>%
   scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010),
                      minor_breaks = NULL) +
   scale_y_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3), limits = c(0, 3.2)) +
-  ylab("log(Concentration + 1) [\u00b5g/kg]") +
-  xlab("Year | (Length, Fat and LSI)") +
+  ylab("log(Concentration + 1) [\u00b5g/kg] | Length, Fat and LSI") +
+  xlab("Year") +
   #change theme to make the minor and major tick lines in the background the same size
 
     facet_grid(species ~ factor(variable, levels = c(
-    "PCB7",
-    "DDT",
-    "HCH",
+    "SUM_7PCB",
+    "SUM_DDT",
+    "SUM_HCH",
     "HCB",
     "TNC",
-    "PBDE"
+    "SUM_PBDE"
   )))
 
-ggsave("conditional_pr_stepan_data.svg", width = 11, height = 6)
+ggsave("figures/conditional_pr.svg", width = 11, height = 6)
 
-# comditional jtools and visreg
+# comditional using jtools and visreg
 # p_man$visreg[[18]] + scale_y_continuous(breaks = pretty_breaks(n = 10))
 # p_man$effect_plot[[18]]
 # patchwork::wrap_plots(p_man$visreg)
@@ -645,7 +624,6 @@ ggsave("conditional_pr_stepan_data.svg", width = 11, height = 6)
 ### Table
 
 ```{r}
-
 p_man %>% clean_names() %>%
   select(species, variable, tidy) %>%
   unnest(tidy) %>%
@@ -654,7 +632,9 @@ p_man %>% clean_names() %>%
   mutate(estimate = 10^estimate - 1) %>%
   gt(caption = "Percentage decrease per year.",
      groupname_col = "variable",
-     rowname_col = "species") %>% 
+     rowname_col = "species") %>%  
+
+  
   tab_style(
     location = cells_body(
       columns = estimate,
@@ -662,7 +642,6 @@ p_man %>% clean_names() %>%
     ),
     style = list(cell_text(color = "red"))
   ) %>% 
-  
     tab_style(
     location = cells_body(
       columns = estimate,
@@ -673,11 +652,11 @@ p_man %>% clean_names() %>%
   fmt_number(everything(), decimals = 3) %>% 
   fmt_percent(estimate, decimals = 1) %>% 
   tab_footnote("Estimated annual percentage change obtained by exponentiation and corresponding p-values. Green color represents a significant decrease at the p = 0.05 level, while red color indicates a significant increase.")
-
 ```
 
 ```{r lsi-fat-str-of-change}
-p_man %>% clean_names() %>%
+p_man %>%
+  clean_names() %>%
   select(species, variable, tidy) %>%
   unnest(tidy) %>% 
   filter(term == "lsi_pc") %>%
@@ -736,155 +715,6 @@ p_man %>% clean_names() %>%
 ```
 
 
-### Visualization without log-transformation
-
-```{r}
-
-cleaned_data_notrans <- raw_data %>%
-    # log transform covariate length
-    mutate(across(.cols = matches("w_w"), .fn = ~ as.numeric(.x))) %>%
-    mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
-    mutate(across(.cols = matches("fettinnhold_percent|year|lsi|vekt_g"), .fn = ~ as.numeric(.x))) %>%
-    rename_with(
-      ~ str_replace_all(.x, c(
-        "w_w" = "ww",
-        "^s" = "",
-        "fettinnhold_percent" = "fat_pc",
-        "lsi_percent" = "lsi_pc"
-      )) %>%
-        str_to_lower(),
-      .cols = !matches("species")
-    ) %>%
-    # remove obs with no POP data
-    filter(if_any(matches("ww"), ~ !is.na(.x))) %>%
-    pivot_longer(cols = matches("ww"), names_to = "variable", values_to = "value") %>%
-    # update two values found to be incorrectly entered
-    mutate(
-      hel_vekt_g = if_else(hel_vekt_g == 635 & lever_vekt_g == 151.9, 6135, hel_vekt_g),
-      lsi_pc = if_else(hel_vekt_g == 6135 & lever_vekt_g == 151.9, lever_vekt_g / hel_vekt_g, lsi_pc),
-      hel_vekt_g = if_else(hel_vekt_g == 1004 & lever_vekt_g == 780.0, 10040, hel_vekt_g),
-      lsi_pc = if_else(hel_vekt_g == 10040 & lever_vekt_g == 780.0, lever_vekt_g / hel_vekt_g, lsi_pc),
-    )
-
-p_man_notrans <- cleaned_data_notrans %>%
-  ungroup() %>%
-  group_by(species, variable) %>%
-  drop_na(value) %>%
-  nest() %>%
-  # apply model and calculate medians of covariates
-  mutate(
-    model = map(data, pop_lm),
-    med_length_cm = map(
-      data,
-      ~ median(.x$length_cm, na.rm = TRUE)
-    ) %>% as.numeric(),
-    med_fat_pc = map(
-      data,
-      ~ median(.x$fat_pc, na.rm = TRUE)
-    ) %>% as.numeric(),
-    med_lsi_pc = map(
-      data,
-      ~ median(.x$lsi_pc, na.rm = TRUE)
-    ) %>% as.numeric(),
-    mean_length_cm = map(
-      data,
-      ~ mean(.x$length_cm, na.rm = TRUE)
-    ) %>% as.numeric(),
-    mean_fat_pc = map(
-      data,
-      ~ mean(.x$fat_pc, na.rm = TRUE)
-    ) %>% as.numeric(),
-    mean_lsi_pc = map(
-      data,
-      ~ mean(.x$lsi_pc, na.rm = TRUE)
-    ) %>% as.numeric(),
-    mean_year = map(
-      data,
-      ~ mean(.x$year, na.rm = TRUE)
-    ) %>% as.numeric(),
-    mean_value = map(
-      data,
-      ~ mean(.x$value, na.rm = TRUE)
-    ) %>% as.numeric()
-  ) %>%
-  mutate(
-    glance = map(model, broom::glance),
-    year_pval = map(model, ~ broom::tidy(.x)[[2, 5]] %>% as.numeric()),
-    year_estimate = map(model, ~ broom::tidy(.x)[[2, 2]] %>% as.numeric() %>% {10^. - 1}),
-    year_estimate_nolog = map(model, ~ broom::tidy(.x)[[2, 2]] %>% as.numeric()),
-    # extracting model coefficients for partial residual calculation
-    tidy_coeff = map(model, ~ broom::tidy(.x) %>%
-      select(term, estimate) %>%
-      pivot_wider(names_from = "term", values_from = "estimate") %>%
-      clean_names() %>%
-      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_coeff"))),
-    # tidy gets summary variables of the model coefficients
-    tidy = map(model, ~ broom::tidy(.x)),
-    # augment gets per observation variables (e.g. residuals)
-    augment = map2(model, data, ~ broom::augment(.x, .y)),
-    partial_resids = map(model, ~ residuals(.x, type = "partial") %>%
-      as_tibble() %>%
-      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_partial_resid"))),
-    normal_resids = map(model, ~ residuals(.x) %>%
-      as_tibble() %>%
-      rename_with(.cols = everything(), .fn = ~ paste0(.x, "_normal_resid")))
-  ) %>%
-  # add package-generated plots for an extra check
-  mutate(
-    visreg = map(
-      model,
-      ~ visreg(.x, "year", gg = TRUE, type = "conditional")
-    ),
-    effect_plot = map(
-      model,
-      ~ effect_plot(.x, pred = year, interval = TRUE, partial.residuals = TRUE)
-    ),
-    variable = toupper(variable) %>% str_replace_all("_WW", ""),
-    
-  ) %>%
-  # vifs to check for collinearity
-  mutate(
-    vifs = map(model, ~ car::vif(.x) %>% as_tibble())
-    )
-
-p_man_notrans %>%
-  unnest(tidy_coeff, partial_resids, data, normal_resids, augment) %>%
-  ungroup() %>%
-  ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
-  geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
-  # geom_point(aes(year, value), size = 0.2, color = "darkgrey", position = position_jitternudge(width = 0.2, height = 0,
-  #                                    seed = 123, x = 0.5,
-  #                                    direction = "as.is",
-  #                                    nudge.from = "jittered"))+
-  ### TEST COND PART RESID
-  # geom_point(aes(year, value_normal_resid + mean_value +
-  #                year_coeff*(year - mean_year) + length_cm_coeff*(med_length_cm - mean_length_cm) + fat_pc_coeff*(med_fat_pc - mean_fat_pc)), size = 0.2, color = "orange", position = position_jitternudge(width = 0.2, height = 0,
-  #                                    seed = 123, x = -0.5,
-  #                                    direction = "as.is",
-  #                                    nudge.from = "jittered"))+
-  ### TEST COND PART RESID END
-  geom_smooth(method = "lm", color = "orange")+
-  theme_bw() +
-  theme(
-    axis.text.x = element_text(angle = 90, hjust = 1),
-    legend.key = element_blank(),
-    strip.background = element_rect(colour="black", fill="white"),
-    strip.text.x = element_text(face = "bold"),
-    strip.text.y = element_text(face = "bold")
-  ) +
-  scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
-  ylab("Concentration [\u00b5g/kg]") +
-  xlab("Year | (Length, Fat and LSI)") +
-
-    facet_grid2(species ~ factor(variable, levels = c(
-    "PCB7",
-    "DDT",
-    "HCH",
-    "HCB",
-    "TNC",
-    "PBDE"
-  )), scales = "free_y", independent = "y")
-```
 
 ## Regression tables
 
@@ -946,22 +776,22 @@ Cod_reg_tab <- rbind(
   ) %>%
   tab_style(
     location = cells_body(
-      columns = PCB7,
-      rows = property == "p.value" & (PCB7 > 0.05)
+      columns = SUM_7PCB,
+      rows = property == "p.value" & (SUM_7PCB > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
   tab_style(
     location = cells_body(
-      columns = DDT,
-      rows = property == "p.value" & (DDT > 0.05)
+      columns = SUM_DDT,
+      rows = property == "p.value" & (SUM_DDT > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
   tab_style(
     location = cells_body(
-      columns = HCH,
-      rows = property == "p.value" & (HCH > 0.05)
+      columns = SUM_HCH,
+      rows = property == "p.value" & (SUM_HCH > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
@@ -981,8 +811,8 @@ Cod_reg_tab <- rbind(
   ) %>%
   tab_style(
     location = cells_body(
-      columns = PBDE,
-      rows = property == "p.value" & (PBDE > 0.05)
+      columns = SUM_PBDE,
+      rows = property == "p.value" & (SUM_PBDE > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
@@ -997,7 +827,7 @@ Cod_reg_tab <- rbind(
     locations = cells_row_groups(groups = everything())
   ) %>% tab_header("Cod")
   Cod_reg_tab
-  gtsave(Cod_reg_tab, "Cod_reg_tab.docx")
+  gtsave(Cod_reg_tab, "tables/Cod_reg_tab.docx")
   
 
 ```
@@ -1058,22 +888,22 @@ Haddock_reg_tab <- rbind(
   ) %>%
   tab_style(
     location = cells_body(
-      columns = PCB7,
-      rows = property == "p.value" & (PCB7 > 0.05)
+      columns = SUM_7PCB,
+      rows = property == "p.value" & (SUM_7PCB > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
   tab_style(
     location = cells_body(
-      columns = DDT,
-      rows = property == "p.value" & (DDT > 0.05)
+      columns = SUM_DDT,
+      rows = property == "p.value" & (SUM_DDT > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
   tab_style(
     location = cells_body(
-      columns = HCH,
-      rows = property == "p.value" & (HCH > 0.05)
+      columns = SUM_HCH,
+      rows = property == "p.value" & (SUM_HCH > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
@@ -1093,8 +923,8 @@ Haddock_reg_tab <- rbind(
   ) %>%
   tab_style(
     location = cells_body(
-      columns = PBDE,
-      rows = property == "p.value" & (PBDE > 0.05)
+      columns = SUM_PBDE,
+      rows = property == "p.value" & (SUM_PBDE > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
@@ -1109,7 +939,7 @@ Haddock_reg_tab <- rbind(
     locations = cells_row_groups(groups = everything())
   ) %>% tab_header("Haddock")
   Haddock_reg_tab
-  gtsave(Haddock_reg_tab, "Haddock_reg_tab.docx")
+  gtsave(Haddock_reg_tab, "tables/Haddock_reg_tab.docx")
   
  
 ```
@@ -1169,22 +999,22 @@ Saithe_reg_tab <- rbind(
   ) %>%
   tab_style(
     location = cells_body(
-      columns = PCB7,
-      rows = property == "p.value" & (PCB7 > 0.05)
+      columns = SUM_7PCB,
+      rows = property == "p.value" & (SUM_7PCB > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
   tab_style(
     location = cells_body(
-      columns = DDT,
-      rows = property == "p.value" & (DDT > 0.05)
+      columns = SUM_DDT,
+      rows = property == "p.value" & (SUM_DDT > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
   tab_style(
     location = cells_body(
-      columns = HCH,
-      rows = property == "p.value" & (HCH > 0.05)
+      columns = SUM_HCH,
+      rows = property == "p.value" & (SUM_HCH > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
@@ -1204,8 +1034,8 @@ Saithe_reg_tab <- rbind(
   ) %>%
   tab_style(
     location = cells_body(
-      columns = PBDE,
-      rows = property == "p.value" & (PBDE > 0.05)
+      columns = SUM_PBDE,
+      rows = property == "p.value" & (SUM_PBDE > 0.05)
     ),
     style = list(cell_text(weight = "bold"))
   ) %>%
@@ -1220,76 +1050,88 @@ Saithe_reg_tab <- rbind(
     locations = cells_row_groups(groups = everything())
   ) %>% tab_header("Saithe")
   Saithe_reg_tab
-  gtsave(Saithe_reg_tab, "Saithe_reg_tab.docx")
+  gtsave(Saithe_reg_tab, "tables/Saithe_reg_tab.docx")
 ```
 
 ## Graphical abstract
 
 ```{r}
-# p_man %>%
-#   unnest(tidy_coeff, partial_resids, data, normal_resids, augment) %>%
-#   ungroup() %>%
-#   ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
-#   geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
-#   stat_smooth(method = "lm", na.rm = TRUE, se = FALSE, color = "red", size = 0.5) +
-#   # conditional coloring percentage change
-#   geom_text(
-#    data = p_man %>% group_by(species, variable) %>%
-#      distinct(year_estimate, .keep_all = TRUE),
-#    color =
-#      case_when(
-#        p_man %>% group_by(species, variable) %>%
-#          distinct(year_estimate) %>% pull(year_estimate) > 0 &
-#          p_man %>%
-#            group_by(species, variable) %>%
-#            distinct(year_pval) %>%
-#            pull(year_pval) < 0.05 ~ "red",
-#        p_man %>% group_by(species, variable) %>%
-#          distinct(year_estimate) %>% pull(year_estimate) < 0 &
-#          p_man %>%
-#            group_by(species, variable) %>%
-#            distinct(year_pval) %>%
-#            pull(year_pval) < 0.05 ~ "green",
-#        TRUE ~ "black"
-#      ),
-#    fontface = "bold",
-#    x = -Inf, y = Inf, hjust = -0.075, vjust = 1.5,
-#    size = p_man %>% group_by(species, variable) %>%
-#          distinct(year_estimate) %>% pull(year_estimate) %>% as.numeric() %>% abs()*150/14 + 2.3,
-#    # size = 3.7,
-#    aes(label = paste0(round(year_estimate %>% as.numeric() * 100, digits = 1) %>% number(style_positive = "plus", accuracy = 0.1), "%"))
-#  )+
-#   # p-values
-#     geom_text(
-#     data = p_man %>% group_by(species, variable) %>%
-#       distinct(year_pval, .keep_all = TRUE), color = "grey30",
-#     x = 2004.9, y = 0.1, hjust = 0, vjust = 0.6, size = 2.5,
-#     aes(label = paste0("p = ", round(year_pval %>% as.numeric(), digits = 3) %>% format(nsmall = 2)))
-#   ) +
-# 
-#   scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
-#   scale_y_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3), limits = c(0, 3.2)) +
-#   ylab("log(Concentration + 1) [\u00b5g/kg]") +
-#   xlab("Year | (Length, Fat and LSI)") +
-#   
-#   theme_bw() +
-#   theme(
-#     axis.text.x = element_text(angle = 90, hjust = 1),
-#     legend.key = element_blank(),
-#     strip.background = element_rect(colour="black", fill="white"),
-#     strip.text.x = element_text(face = "bold"),
-#     strip.text.y = element_text(face = "bold"))+
-#   
-#     facet_grid(species ~ factor(variable, levels = c(
-#     "PCB7",
-#     "DDT",
-#     "HCH",
-#     "HCB",
-#     "TNC",
-#     "PBDE"
-#   )))
-# 
-# ggsave("graphical_abstr.svg", width = 11, height = 6)
+p_man %>%
+  unnest(tidy_coeff, partial_resids, data, normal_resids, augment) %>%
+  ungroup() %>%
+  ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
+  geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
+  stat_smooth(method = "lm", na.rm = TRUE, se = FALSE, color = "red", size = 0.5) +
+  # fit a linear curve, with color gradient dependent on the value of the p-value
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    aes(color = 10^mean(year_estimate, na.rm = TRUE) - 1, fill = 10^mean(year_estimate, na.rm = TRUE) - 1),
+    size = 5,
+    se = FALSE
+  ) +
+  # conditional coloring percentage change
+  geom_text(
+   data = p_man %>% group_by(species, variable) %>%
+     distinct(year_estimate, .keep_all = TRUE),
+   color =
+     case_when(
+       p_man %>% group_by(species, variable) %>%
+         distinct(year_estimate) %>% pull(year_estimate) > 0 &
+         p_man %>%
+           group_by(species, variable) %>%
+           distinct(year_pval) %>%
+           pull(year_pval) < 0.05 ~ "red",
+       p_man %>% group_by(species, variable) %>%
+         distinct(year_estimate) %>% pull(year_estimate) < 0 &
+         p_man %>%
+           group_by(species, variable) %>%
+           distinct(year_pval) %>%
+           pull(year_pval) < 0.05 ~ "green",
+       TRUE ~ "black"
+     ),
+   fontface = "bold",
+   x = -Inf, y = Inf, hjust = -0.075, vjust = 1.5,
+   size = p_man %>% group_by(species, variable) %>%
+         distinct(year_estimate) %>% pull(year_estimate) %>% as.numeric() %>% abs()*150/14 + 2.3,
+   # size = 3.7,
+   aes(label = paste0(round(year_estimate %>% as.numeric() * 100, digits = 1) %>% number(style_positive = "plus", accuracy = 0.1), "%"))
+ )+
+  # p-values
+    geom_text(
+    data = p_man %>% group_by(species, variable) %>%
+      distinct(year_pval, .keep_all = TRUE), color = "grey30",
+    x = 2004.9, y = 0.1, hjust = 0, vjust = 0.6, size = 2.5,
+    aes(label = paste0("p = ", round(year_pval %>% as.numeric(), digits = 3) %>% format(nsmall = 2)))
+  ) +
+scale_fill_continuous(limits = c(-4, 20))+
+  scale_color_continuous(limits = c(-4, 20))+
+  scale_x_continuous(breaks = c(2019, 2016, 2013, 2011, 2008, 2005, 2010)) +
+  scale_y_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3), limits = c(0, 3.2)) +
+  ylab("log(Concentration + 1) [\u00b5g/kg]") +
+  xlab("Year | (Length, Fat and LSI)") +
+
+  theme_bw() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.key = element_blank(),
+    strip.background = element_rect(colour="black", fill="white"),
+    strip.text.x = element_text(face = "bold"),
+    strip.text.y = element_text(face = "bold"))+
+
+  facet_grid(species ~ factor(variable, levels = c(
+  "SUM_7PCB",
+  "SUM_DDT",
+  "SUM_HCH",
+  "HCB",
+  "TNC",
+  "SUM_PBDE"
+)))
+
+
+
+
+ggsave("graphical_abstr2.svg", width = 11, height = 6)
 ```
 
 
@@ -1323,7 +1165,7 @@ piedata %>%
   # guides(fill = guide_legend(title = "Group")) +
   # theme_void() +
   facet_wrap(~Species)
-ggsave("stommach_pie.svg", width = 9, height = 6)
+ggsave("figures/stommach_pie.svg", width = 9, height = 6)
 
 ```
 
