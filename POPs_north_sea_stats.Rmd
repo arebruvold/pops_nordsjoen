@@ -50,9 +50,10 @@ writeLines(capture.output(devtools::session_info()), "sessionInfo.txt")
 
 ```{r cleaning}
 
-raw_data <- map2(c(1:3), c("Haddock", "Saithe", "Cod"), ~ read_excel("data/Fullt_datasett_enkelte_kongenere_NS_torsk_hyse_sei.xlsx", skip = 0, sheet = .x) %>%
+raw_data <- map2(c(1:3), c("Haddock", "Saithe", "Cod"), ~ read_excel("data/Fullt_datasett_enkelte_kongenere_NS_torsk_hyse_sei_lokasjoner.xlsx", skip = 0, sheet = .x) %>%
   mutate(species = .y) %>%
   clean_names() %>%
+
   rename(
     length_cm = matches("lengde|lengde_cm"),
     liver_weight_g = matches("levervekt"),
@@ -61,20 +62,25 @@ raw_data <- map2(c(1:3), c("Haddock", "Saithe", "Cod"), ~ read_excel("data/Fullt
     tnc = matches("transnonaklor"),
     sample_name = matches("^prove$"),
     fish_weight_g = matches("^vekt_g$|vekt_av_fisk"),
-    bde_49_71 = matches("bde_49"),
+    # bde_49_71 = matches("bde_49"),
     year = matches("^ar$|^aar$"),
     sum_pbde = sum,
     sum_7pcb = pcb7,
-    sum_6pcb = pcb6
+    sum_6pcb = pcb6,
+    sex = kjonn,
+    age = alder
   ) %>%
-  select(!matches("x31")) %>%
+        # remove PBDEs congener data with incoherent naming across species
+    # and containing errors as well as extra columns used for calculations in excel.
+    select(-matches("bde_"), -matches("percent"), -matches("x\\d{1,3}")) %>% 
   # convert all columns that are not species or sample_name to numeric
-  mutate(across(.cols = !matches("species|sample_name"), .fns = as.numeric))) %>%
+  mutate(across(.cols = !matches("species|sample_name|location"), .fns = as.numeric))) %>%
   reduce(rbind) %>%
   # removing data with empty variables used for the model
-  drop_na(species, year, length_cm, fat_pc, lsi_pc)
+  drop_na(species, year, length_cm, fat_pc, lsi_pc) %>%
+  filter(location == "Tampen")
 
-predictors <- c("length_cm", "fish_weight_g", "liver_weight_g", "fat_pc", "lsi_pc", "year", "species", "sample_name", "alder")
+predictors <- c("length_cm", "fish_weight_g", "liver_weight_g", "fat_pc", "lsi_pc", "year", "species", "sample_name", "age", "sex")
 
 responses <- raw_data %>%
   select(!all_of(predictors)) %>%
@@ -90,6 +96,7 @@ cleaned_data <- raw_data %>%
   ) %>%
   mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
   filter(if_any(matches(main_responses), ~ !is.na(.x))) %>%
+  mutate(sex = as_factor(sex)) %>% 
   pivot_longer(cols = matches(responses), names_to = "variable", values_to = "value")
 ```
 
@@ -387,8 +394,8 @@ No clear systematic patterns in the variance versus fitted value is observed, mo
 ```{r}
 # year
 cleaned_data %>%
-  select(-variable, -value, -fish_weight_g, -liver_weight_g, -sample_name) %>%
-  mutate(across(!matches("species"), ~ as.numeric(.x))) %>%
+  select(-variable, -value, -fish_weight_g, -liver_weight_g, -sample_name, -sex) %>%
+  mutate(across(!matches("species|sex"), ~ as.numeric(.x))) %>%
   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
   ggplot(aes(as_factor(year), value)) +
   geom_point() + geom_boxplot()+
@@ -424,6 +431,7 @@ VIFs were determined to be below 3 for each dependent variable. However, some co
 #   ggplot(aes(value)) + geom_boxplot() + facet_grid(species ~ variable, scales = "free")+ theme(
 #       axis.text.x = element_text(angle = 90, hjust = 1)
 #     )
+
 ```
 Two outliers were identified in LSI. Upon further investigation, it was determined that these values were the result of typographic errors during data collection. These were corrected in the raw data prior to import of the curated dataset. 
 
@@ -482,7 +490,7 @@ cleaned_data %>%
   filter(variable %in% c("SUM_DDT", "SUM_7PCB"),
          species == "Cod") %>%
   mutate(value = 10^value - 1) %>%
-  ggplot(aes(alder, value))+
+  ggplot(aes(age, value))+
   geom_point(size = 0.5) + 
   geom_smooth(method = "lm", color = "red", size = 0.75) + 
   scale_x_continuous(breaks = pretty_breaks(n = 5))+
@@ -539,17 +547,6 @@ p_man %>%
   ungroup() %>%
   ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
   geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
-  # geom_point(aes(year, value), size = 0.2, color = "darkgrey", position = position_jitternudge(width = 0.2, height = 0,
-  #                                    seed = 123, x = 0.5,
-  #                                    direction = "as.is",
-  #                                    nudge.from = "jittered"))+
-  ### TEST COND PART RESID
-  # geom_point(aes(year, value_normal_resid + mean_value +
-  #                year_coeff*(year - mean_year) + length_cm_coeff*(med_length_cm - mean_length_cm) + fat_pc_coeff*(med_fat_pc - mean_fat_pc)), size = 0.2, color = "orange", position = position_jitternudge(width = 0.2, height = 0,
-  #                                    seed = 123, x = -0.5,
-  #                                    direction = "as.is",
-  #                                    nudge.from = "jittered"))+
-  ### TEST COND PART RESID END
   stat_smooth(method = "lm", na.rm = TRUE, se = FALSE, color = "red", size = 0.5) +
   # conditional coloring percentage change
   geom_text(
@@ -600,8 +597,6 @@ p_man %>%
   scale_y_continuous(breaks = c(0, 0.5, 1, 1.5, 2, 2.5, 3), limits = c(0, 3.2)) +
   ylab("log(Concentration + 1) [\u00b5g/kg] | Length, Fat and LSI") +
   xlab("Year") +
-  #change theme to make the minor and major tick lines in the background the same size
-
     facet_grid(species ~ factor(variable, levels = c(
     "SUM_7PCB",
     "SUM_DDT",
@@ -618,6 +613,14 @@ ggsave("figures/conditional_pr.svg", width = 11, height = 6)
 # p_man$effect_plot[[18]]
 # patchwork::wrap_plots(p_man$visreg)
 ```
+
+
+
+```{r location-test}
+
+```
+
+
 
 ## Strength of decrease
 
@@ -1062,14 +1065,6 @@ p_man %>%
   ggplot(aes(year, (value_normal_resid + year * year_coeff + intercept_coeff + med_length_cm * length_cm_coeff + med_fat_pc * fat_pc_coeff + med_lsi_pc * lsi_pc_coeff))) +
   geom_jitter(size = 0.3, na.rm = T, height = 0, width = 0.25) +
   stat_smooth(method = "lm", na.rm = TRUE, se = FALSE, color = "red", size = 0.5) +
-  # fit a linear curve, with color gradient dependent on the value of the p-value
-  geom_smooth(
-    method = "lm",
-    formula = y ~ x,
-    aes(color = 10^mean(year_estimate, na.rm = TRUE) - 1, fill = 10^mean(year_estimate, na.rm = TRUE) - 1),
-    size = 5,
-    se = FALSE
-  ) +
   # conditional coloring percentage change
   geom_text(
    data = p_man %>% group_by(species, variable) %>%
