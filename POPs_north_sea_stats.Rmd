@@ -50,10 +50,10 @@ writeLines(capture.output(devtools::session_info()), "sessionInfo.txt")
 
 ```{r cleaning}
 
-raw_data <- map2(c(1:3), c("Haddock", "Saithe", "Cod"), ~ read_excel("data/Fullt_datasett_enkelte_kongenere_NS_torsk_hyse_sei_lokasjoner.xlsx", skip = 0, sheet = .x) %>%
+
+raw_data <- map2(c(1:3), c("Haddock", "Saithe", "Cod"), ~ read_excel("data/Fullt_datasett_enkelte_kongenere_NS_torsk_hyse_sei.xlsx", skip = 0, sheet = .x) %>%
   mutate(species = .y) %>%
   clean_names() %>%
-
   rename(
     length_cm = matches("lengde|lengde_cm"),
     liver_weight_g = matches("levervekt"),
@@ -62,25 +62,21 @@ raw_data <- map2(c(1:3), c("Haddock", "Saithe", "Cod"), ~ read_excel("data/Fullt
     tnc = matches("transnonaklor"),
     sample_name = matches("^prove$"),
     fish_weight_g = matches("^vekt_g$|vekt_av_fisk"),
-    # bde_49_71 = matches("bde_49"),
+    bde_49_71 = matches("bde_49"),
     year = matches("^ar$|^aar$"),
     sum_pbde = sum,
     sum_7pcb = pcb7,
     sum_6pcb = pcb6,
-    sex = kjonn,
     age = alder
   ) %>%
-        # remove PBDEs congener data with incoherent naming across species
-    # and containing errors as well as extra columns used for calculations in excel.
-    select(-matches("bde_"), -matches("percent"), -matches("x\\d{1,3}")) %>% 
+  select(!matches("x31")) %>%
   # convert all columns that are not species or sample_name to numeric
-  mutate(across(.cols = !matches("species|sample_name|location"), .fns = as.numeric))) %>%
+  mutate(across(.cols = !matches("species|sample_name"), .fns = as.numeric))) %>%
   reduce(rbind) %>%
   # removing data with empty variables used for the model
-  drop_na(species, year, length_cm, fat_pc, lsi_pc) %>%
-  filter(location == "Tampen")
+  drop_na(species, year, length_cm, fat_pc, lsi_pc)
 
-predictors <- c("length_cm", "fish_weight_g", "liver_weight_g", "fat_pc", "lsi_pc", "year", "species", "sample_name", "age", "sex")
+predictors <- c("length_cm", "fish_weight_g", "liver_weight_g", "fat_pc", "lsi_pc", "year", "species", "sample_name", "age")
 
 responses <- raw_data %>%
   select(!all_of(predictors)) %>%
@@ -96,7 +92,6 @@ cleaned_data <- raw_data %>%
   ) %>%
   mutate(across(.cols = matches("length_cm"), .fn = ~ log10(as.numeric(.x)))) %>%
   filter(if_any(matches(main_responses), ~ !is.na(.x))) %>%
-  mutate(sex = as_factor(sex)) %>% 
   pivot_longer(cols = matches(responses), names_to = "variable", values_to = "value")
 ```
 
@@ -394,7 +389,7 @@ No clear systematic patterns in the variance versus fitted value is observed, mo
 ```{r}
 # year
 cleaned_data %>%
-  select(-variable, -value, -fish_weight_g, -liver_weight_g, -sample_name, -sex) %>%
+  select(-variable, -value, -fish_weight_g, -liver_weight_g, -sample_name) %>%
   mutate(across(!matches("species|sex"), ~ as.numeric(.x))) %>%
   pivot_longer(cols = -c("species", "year"), names_to = "variable", values_to = "value") %>%
   ggplot(aes(as_factor(year), value)) +
@@ -612,12 +607,6 @@ ggsave("figures/conditional_pr.svg", width = 11, height = 6)
 # p_man$visreg[[18]] + scale_y_continuous(breaks = pretty_breaks(n = 10))
 # p_man$effect_plot[[18]]
 # patchwork::wrap_plots(p_man$visreg)
-```
-
-
-
-```{r location-test}
-
 ```
 
 
