@@ -10,3 +10,6 @@ Institute of Marine Research, P.O. Box 1870 Nordnes, 5817 Bergen, Norway. Email 
 
 The work is distributed under a [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) license.
 
+
+[![DOI](https://zenodo.org/badge/585852343.svg)](https://zenodo.org/doi/10.5281/zenodo.8301281)
+
